@@ -1,0 +1,6 @@
+anthropic
+streamlit
+python-jobspy
+python-dotenv
+pandas
+requests
