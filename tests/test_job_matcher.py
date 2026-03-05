@@ -221,8 +221,8 @@ class TestParseMatchResponse:
         assert result["match_score"] == 78
         assert result["match_label"] == "Strong"
         assert result["summary"] == "Strong Python and AWS match with valuable healthcare domain knowledge."
-        assert "Python" in result["matching_skills"]
-        assert "Kubernetes" in result["missing_skills"]
+        assert "python" in result["matching_skills"]
+        assert "kubernetes" in result["missing_skills"]
         assert isinstance(result["reasoning"], str)
         assert len(result["reasoning"]) > 0
 
