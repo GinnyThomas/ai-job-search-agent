@@ -12,17 +12,19 @@ Job hunting is inefficient in three specific ways this tool is designed to fix:
 
 **The hallucination problem.** AI assistants like ChatGPT and custom GPTs cannot access live job boards. When asked about current openings, they fabricate results. Every listing they return is potentially fictional. This tool solves that by connecting directly to real job board APIs and scrapers, ensuring every result is a live posting.
 
-**The incomplete profile problem.** A CV is a marketing document — curated for a specific context, deliberately selective, and quickly out of date. Matching jobs against a single CV means the tool only knows one version of the candidate at one point in time. Skills from earlier roles, domain expertise from a previous career, and achievements buried in performance reviews are all invisible. This tool solves that by building a rich candidate profile from multiple sources — CVs across time, year-end reviews, and self-reflections — so the matcher has access to the full picture.
+**The incomplete profile problem.** A CV is a marketing document — curated for a specific context, deliberately selective, and quickly out of date. Matching jobs against a single CV means the tool only knows one version of the candidate at one point in time. This tool builds a rich candidate profile from multiple sources — CVs across time, year-end reviews, and self-reflections — so the matcher has access to the full picture.
 
-**The ATS problem.** Most large companies filter applications through Applicant Tracking Systems before a human reads them. These systems do keyword matching — if your CV doesn't contain the right terms from the job description, you're filtered out regardless of your actual fit. This tool solves that by generating tailored, ATS-optimised resume versions assembled from the full candidate profile, for each role you decide to apply for.
+**The ATS problem.** Most large companies filter applications through Applicant Tracking Systems before a human reads them. These systems do keyword matching — if your CV doesn't contain the right terms from the job description, you're filtered out regardless of your actual fit. This tool generates tailored, ATS-optimised resume versions assembled from the full candidate profile for each role you decide to apply for.
 
 ---
 
 ## 2. Goals
 
-- Build a rich candidate profile from multiple source documents
+- Build a rich candidate profile from multiple source documents, including skill proficiency and recency
+- Allow the candidate to view and verify their profile, with inline proficiency editing
 - Fetch live, real job listings from multiple sources with no hallucinations
 - Score each listing honestly against the full candidate profile with clear reasoning
+- Weight skill matches appropriately — recent production skills score differently from historical bootcamp skills
 - Identify skill gaps and suggest concrete actions to close them
 - Generate tailored, ATS-optimised resumes assembled from the full profile
 - Provide direct links to every job posting for one-click access
@@ -42,19 +44,17 @@ Job hunting is inefficient in three specific ways this tool is designed to fix:
 
 ## 4. Architecture Overview
 
-The system is organised as a set of independent agents, each with a single responsibility, orchestrated by a Streamlit frontend.
-
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                     app.py (Streamlit UI)                │
-│          User inputs → displays results + actions        │
+│    Tab 1: My Profile  |  Tab 2: Search Jobs              │
 └───────────┬──────────────────────────────────────────────┘
             │
             ▼
 ┌─────────────────────┐
-│  profile_builder.py │  Reads all source documents (CVs, reviews,
-│                     │  reflections) and extracts a structured
-│                     │  master candidate profile → data/profile.json
+│  profile_builder.py │  Reads source documents, extracts enriched
+│                     │  profile with proficiency + recency metadata.
+│                     │  format_profile_for_display() prepares it for UI.
 └─────────┬───────────┘
           │  data/profile.json (single source of truth)
           │
@@ -63,23 +63,11 @@ The system is organised as a set of independent agents, each with a single respo
     ▼                            ▼
 ┌─────────────────────┐   ┌─────────────────────┐
 │   job_fetcher.py    │   │   job_matcher.py    │
-│                     │   │                     │
-│  Fetches live jobs  │   │  Scores each job    │
-│  from JobSpy +      │   │  against the full   │
-│  Adzuna API         │   │  candidate profile  │
 └─────────┬───────────┘   └─────────┬───────────┘
-          │                         │
           └────────────┬────────────┘
-                       │  Ranked, scored listings
                        ▼
           ┌─────────────────────┐     ┌──────────────────────┐
           │  gap_analyser.py    │     │  resume_tailor.py    │
-          │                     │     │                      │
-          │  For a selected job │     │  Assembles a CV from │
-          │  identifies missing │     │  the full profile,   │
-          │  skills + suggests  │     │  tailored to ATS     │
-          │  actions to close   │     │  keywords in the     │
-          │  the gap            │     │  job description     │
           └─────────────────────┘     └──────────────────────┘
 ```
 
@@ -89,29 +77,74 @@ The system is organised as a set of independent agents, each with a single respo
 
 ### 5.1 `agents/profile_builder.py`
 
-**Responsibility:** Read all candidate source documents and extract a structured master profile. This profile is the single source of truth used by all other agents.
+**Responsibility:** Read all candidate source documents, extract a structured master profile with enriched skill metadata, and provide a display-ready format for the UI.
 
-**Status:** 🔲 Planned
+**Status:** 🔲 Planned (tests written)
 
-**Inputs:**
-- Any combination of: CV files (PDF or DOCX), year-end reviews, self-reflections, personal statements — stored in `data/source_documents/`
+**Supported file formats:** PDF, DOCX, plain text (.txt)
 
-**Output:** `data/profile.json` — a structured candidate profile
+**Required libraries:** `pdfplumber`, `python-docx`
 
-**Profile schema:**
+---
+
+#### Enriched Skill Schema
+
+Skills are stored as objects, not flat strings. A bootcamp skill from 4 years ago scores differently from a production skill used last month:
+
+```python
+# Historical / low-confidence skill
+{
+    "name": "ruby",              # Always normalised: lowercase, stripped
+    "proficiency": "Basic",      # Expert | Proficient | Familiar | Basic
+    "last_used": "2022",
+    "context": "Coding bootcamp — Makers Academy",
+    "is_current": False
+}
+
+# Current / high-confidence skill
+{
+    "name": "python",
+    "proficiency": "Proficient",
+    "last_used": "2025",
+    "context": "Production engineering at HMRC — alerting systems, data pipelines",
+    "is_current": True
+}
+```
+
+**Proficiency levels:**
+
+| Level | Meaning |
+|---|---|
+| `Expert` | Deep, long-term mastery — could teach it |
+| `Proficient` | Solid production experience |
+| `Familiar` | Used meaningfully but not deeply |
+| `Basic` | Introductory or bootcamp level only |
+
+---
+
+#### Enriched Domain Knowledge Schema
+
+```python
+{
+    "domain": "healthcare / clinical systems",
+    "depth": "Expert",
+    "years": 10,
+    "context": "Registered Nurse Practitioner — clinical assessment, patient care",
+    "is_current": False
+}
+```
+
+---
+
+#### Full Profile Schema
+
 ```python
 {
     "full_name": str,
     "current_role": str,
-    "technical_skills": {
-        "languages": list,       # e.g. ["Python", "JavaScript", "Ruby", "Scala"]
-        "frameworks": list,      # e.g. ["Flask", "React"]
-        "cloud": list,           # e.g. ["AWS"]
-        "tools": list,           # e.g. ["Git", "Docker"]
-        "databases": list
-    },
-    "domain_knowledge": list,    # e.g. ["healthcare", "fintech", "tax systems"]
-    "soft_skills": list,         # e.g. ["public speaking", "team leadership"]
+    "technical_skills": [enriched skill objects],
+    "domain_knowledge": [enriched domain objects],
+    "soft_skills": list,           # Flat list — e.g. ["public speaking", "team leadership"]
     "experience": [
         {
             "role": str,
@@ -122,35 +155,64 @@ The system is organised as a set of independent agents, each with a single respo
     ],
     "education": list,
     "certifications": list,
-    "notable_achievements": list,  # Quantified wins e.g. "95% alert reduction"
-    "source_documents": list       # Track which files were used
+    "notable_achievements": list,
+    "source_documents": list
 }
 ```
 
-**Key design decisions:**
-- The profile is regenerated whenever new source documents are added
-- Skill names are normalised at extraction time (consistent casing, spacing) so all downstream agents work from clean data
-- Claude is used to extract and reconcile information across multiple documents — it handles the case where the same skill appears differently across sources
-- The profile stores more than any single CV would — earlier skills, domain knowledge from previous careers, achievements from performance reviews
+---
+
+#### Internal Functions
+
+```
+_extract_text_from_pdf(path)          → str
+_extract_text_from_docx(path)         → str
+_extract_text_from_file(path)         → str   (dispatches by extension)
+_extract_profile_from_text(text)      → dict  (calls Claude)
+_merge_profiles(profiles)             → dict  (combines, deduplicates)
+format_profile_for_display(profile)   → dict  (prepares for Streamlit UI)
+build_profile(source_dir)             → dict  (main orchestrator)
+save_profile(profile, output_path)    → None
+load_profile(path)                    → dict
+```
+
+---
+
+#### `format_profile_for_display(profile)` — Display Function
+
+Transforms `profile.json` into a structure optimised for the Streamlit UI.
+Splits technical skills into current and historical for clarity.
+Every field returns an empty list rather than None — the UI never needs to guard against None.
+
+**Returns:**
+```python
+{
+    "full_name": str,
+    "current_role": str,
+    "current_skills": list,      # technical_skills where is_current == True, sorted by proficiency
+    "historical_skills": list,   # technical_skills where is_current == False
+    "domain_knowledge": list,
+    "soft_skills": list,
+    "notable_achievements": list,
+    "source_documents": list
+}
+```
+
+---
+
+#### Merge Strategy
+
+- **Skills:** deduplicated by normalised name. When the same skill appears in multiple documents, the highest proficiency wins. The most recent `last_used` date wins.
+- **Domain knowledge:** deduplicated by domain name.
+- **Soft skills:** deduplicated, case-insensitive.
+- **Scalar fields** (name, current_role): last document wins — pass documents in chronological order (oldest first).
+- **List fields** (experience, education, certifications, achievements): all documents contribute, duplicates removed.
 
 ---
 
 ### 5.2 `agents/job_fetcher.py`
 
-**Responsibility:** Fetch live job listings from external sources and return a unified, deduplicated DataFrame.
-
-**Status:** ✅ Built and tested
-
-**Sources:**
-- LinkedIn, Indeed, Glassdoor via `python-jobspy`
-- Adzuna via REST API
-
-**Key design decisions:**
-- `MARKET_CONFIG` dictionary centralises all market-specific configuration. Adding a new market requires only a new dictionary entry — no other code changes
-- `get_market_options()` exposes the market list to the UI, ensuring the dropdown and the config are always in sync (single source of truth)
-- Remote markets append "remote" to the search term and pass `is_remote=True` to JobSpy for better filtering
-- All external calls are wrapped in try/except — a failed source returns an empty DataFrame rather than crashing the app
-- Each result is tagged with its `market` for display and filtering
+**Status:** ✅ Built and tested (22 tests passing)
 
 **Markets supported:**
 | Market | Sources | Adzuna Endpoint |
@@ -163,27 +225,7 @@ The system is organised as a set of independent agents, each with a single respo
 
 ### 5.3 `agents/job_matcher.py`
 
-**Responsibility:** Score each job listing against the candidate's full profile and return structured match data.
-
-**Status:** 🔲 Planned (tests next)
-
-**Inputs:**
-- `data/profile.json` — the full candidate profile
-- A single job listing (title, company, description)
-
-**Outputs per job:**
-```python
-{
-    "match_score": int,          # 0–100
-    "match_label": str,          # "Strong" (≥70), "Potential" (40–69), "Weak" (<40)
-    "summary": str,              # One-sentence fit summary
-    "matching_skills": list,     # Skills present in both profile and job
-    "missing_skills": list,      # Skills in job description not in profile
-    "reasoning": str,            # Claude's full reasoning
-    "highlight_background": str  # Non-obvious profile strengths relevant to this role
-                                 # e.g. nursing background for a health tech role
-}
-```
+**Status:** ✅ Built and tested (41 tests passing)
 
 **Scoring thresholds:**
 ```python
@@ -192,107 +234,118 @@ POTENTIAL_THRESHOLD = 40  # 40–69 → "Potential"
                           #  0–39 → "Weak"
 ```
 
-**Key design decisions:**
-- Matching is done against the full candidate profile, not a single CV — surfacing skills and experience that may not appear on the current CV
-- `match_label` is always derived from `match_score` using the thresholds above — never returned independently by Claude — ensuring they can never be inconsistent
-- A separate `_parse_match_response()` function handles all parsing and validation of Claude's JSON response, keeping error handling isolated and testable
-- `normalise_skill()` is applied to all skill lists for consistent display and comparison
-- Claude Haiku is used for bulk matching (speed and cost); Claude Sonnet is used for detailed single-role analysis
-- `highlight_background` surfaces non-obvious strengths — e.g. clinical domain knowledge for a health data role — that the candidate might not think to emphasise
+**Enriched skill context passed to Claude:**
+```
+Technical Skills:
+  - python: Proficient — production engineering at HMRC until 2025 (current)
+  - ruby: Basic — coding bootcamp only, 2022 (not current)
+  - aws: Proficient — certified, current
+```
 
 ---
 
 ### 5.4 `agents/gap_analyser.py`
 
-**Responsibility:** For a specific job, identify what's missing from the candidate profile and suggest concrete actions to close the gap.
-
 **Status:** 🔲 Planned
-
-**Inputs:**
-- `data/profile.json`
-- A single job listing
-- The match output from `job_matcher.py`
-
-**Outputs:**
-```python
-{
-    "gaps": list,               # Specific missing skills or experience
-    "suggestions": list,        # Concrete actions (e.g. "Build a FastAPI project")
-    "effort_estimate": str,     # "1 weekend", "2–3 weeks", etc.
-    "apply_now": bool           # True if strong enough match to apply immediately
-}
-```
 
 ---
 
 ### 5.5 `agents/resume_tailor.py`
 
-**Responsibility:** Assemble an ATS-optimised CV tailored to a specific job description, drawing from the full candidate profile.
-
 **Status:** 🔲 Planned
-
-**Inputs:**
-- `data/profile.json` — the full candidate profile
-- Target job description
-- Match output from `job_matcher.py`
-
-**Outputs:**
-- A tailored CV as a `.docx` file, downloadable from the UI
-- A summary of what was selected, emphasised, and why
-
-**Key design decisions:**
-- The tailored CV is *assembled* from the full profile, not just a rewrite of the current CV — earlier skills, domain knowledge from previous careers, and relevant achievements can all be surfaced
-- Claude selects and emphasises the most relevant subset of the profile for the specific role
-- Keywords from the job description are woven in where the underlying experience genuinely supports it — nothing is fabricated
-- For health tech roles, nursing background is surfaced. For data roles, analytical experience from any domain is included. The profile makes this possible.
 
 ---
 
 ### 5.6 `app.py` (Streamlit Frontend)
 
-**Responsibility:** Provide the user interface. Orchestrates calls to all agents.
-
 **Status:** 🔧 In Progress
 
-**UI flow:**
-1. Profile setup: upload source documents, trigger profile build
-2. Sidebar: job title input, market selector, results count slider, search button
-3. Results table: ranked by match score, with company, location, date, link, score, label
-4. Job detail panel: click a job to see full match reasoning, highlighted strengths, and gap analysis
-5. Resume tailor button: generates a downloadable tailored CV for the selected job
+**UI structure — two tabs:**
+
+```
+┌─────────────────────────────────────────┐
+│  TABS: [👤 My Profile] [🔍 Search Jobs] │
+└─────────────────────────────────────────┘
+```
+
+---
+
+#### Tab 1 — My Profile
+
+Displays the full candidate profile for verification. The candidate can confirm that Claude correctly extracted skills, proficiency levels, and domain knowledge before running any job searches.
+
+```
+👤 My Profile
+Built from: cv_2025.pdf, cv_2022.pdf, yearend_2024.pdf
+─────────────────────────────────────────────────────
+
+Current Technical Skills
+┌──────────────┬────────────┬───────────┬──────────────────────────────┐
+│ Skill        │ Proficiency│ Last Used │ Context                      │
+├──────────────┼────────────┼───────────┼──────────────────────────────┤
+│ python       │ Proficient │ 2025      │ Production engineering, HMRC │
+│ aws          │ Proficient │ 2025      │ Certified, cloud infra       │
+│ scala        │ Proficient │ 2025      │ Production, HMRC             │
+└──────────────┴────────────┴───────────┴──────────────────────────────┘
+
+Historical Skills (may be rusty)
+┌──────────────┬────────────┬───────────┬──────────────────────────────┐
+│ ruby         │ Basic      │ 2022      │ Coding bootcamp only         │
+└──────────────┴────────────┴───────────┴──────────────────────────────┘
+
+Domain Knowledge
+• healthcare / clinical systems — Expert (10 years) — Nurse Practitioner
+• fintech / tax systems — Proficient — HMRC engineering
+
+Soft Skills
+• public speaking  • team leadership  • stakeholder communication
+
+Notable Achievements
+• 95% reduction in production alerts at HMRC
+• Conference speaker
+
+─────────────────────────────────────────────────────
+[+ Add Documents]    [🔄 Rebuild Profile]
+```
+
+**Inline proficiency editing (Option C):**
+Each skill row has a selectbox for proficiency — `Expert | Proficient | Familiar | Basic`. Changes are saved directly to `profile.json`. This covers the most likely correction: Claude occasionally over- or under-estimates proficiency from limited document context.
+
+**Deep edits (Option B fallback):**
+For adding skills Claude missed or removing incorrect entries, a note directs the user to edit `data/profile.json` directly in their editor. IntelliJ handles JSON natively.
+
+---
+
+#### Tab 2 — Search Jobs
+
+```
+Sidebar: job title | market | results count | search button
+
+Results table: ranked by match score
+  columns: title | company | location | score | label | date | link
+
+Job detail panel (on row click):
+  - Match reasoning
+  - Matching skills / missing skills
+  - Highlighted background strengths
+  - Gap analysis
+  - [Tailor Resume → .docx download]
+```
 
 ---
 
 ## 6. Data Flow
 
 ```
-User uploads source documents (CVs, reviews, reflections)
-        │
-        ▼
-profile_builder.py → extracts full candidate profile → data/profile.json
-        │
-        │   (profile is built once, reused for all searches)
-        │
-User inputs job title + market
-        │
-        ▼
-job_fetcher.py → fetches N live jobs → DataFrame
-        │
-        ▼
-job_matcher.py → scores each job against profile → adds score columns
-        │
-        ▼
-app.py → displays ranked results table with scores and links
-        │
-        ├── User selects a job
-        │         │
-        │         ├── gap_analyser.py → displays gaps + suggestions
-        │         │
-        │         └── User clicks "Tailor Resume"
-        │                   │
-        │                   └── resume_tailor.py → .docx download
-        │
-        └── User clicks job URL → opens live posting in browser
+User uploads source documents
+        ↓
+profile_builder.py → data/profile.json
+        ↓
+User reviews profile in Tab 1 → adjusts proficiency if needed
+        ↓
+User searches in Tab 2 → job_fetcher → job_matcher → ranked results
+        ↓
+User selects job → gap_analyser → resume_tailor → .docx download
 ```
 
 ---
@@ -301,15 +354,13 @@ app.py → displays ranked results table with scores and links
 
 ```
 data/
-├── source_documents/     # User uploads CVs, reviews, reflections here
+├── source_documents/     # gitignored — personal documents stay local
 │   ├── cv_2025.pdf
 │   ├── cv_2022.pdf
 │   └── yearend_2024.pdf
-├── profile.json          # Generated by profile_builder — do not edit manually
+├── profile.json          # Generated — do not edit manually (use Tab 1 for proficiency)
 └── .gitkeep
 ```
-
-`profile.json` is generated and can be regenerated at any time. Source documents are local only and should never be committed to the repository — add `data/source_documents/` to `.gitignore`.
 
 ---
 
@@ -318,18 +369,14 @@ data/
 | Service | Purpose | Auth | Free Tier |
 |---|---|---|---|
 | Anthropic Claude API | Profile building, matching, gap analysis, resume tailoring | API key | Pay per token |
-| JobSpy (python-jobspy) | LinkedIn, Indeed, Glassdoor scraping | None required | Yes |
-| Adzuna API | Additional job listings, EU/UK/US coverage | App ID + API key | Yes (free tier) |
+| JobSpy | LinkedIn, Indeed, Glassdoor scraping | None | Yes |
+| Adzuna API | Additional listings, EU/UK/US coverage | App ID + API key | Yes |
 
-**Model strategy:**
-- Claude Haiku — bulk job matching (fast, low cost)
-- Claude Sonnet — profile building, detailed role analysis, resume tailoring (higher quality)
+**Model strategy:** Haiku for bulk matching. Sonnet for profile building, detailed analysis, resume tailoring.
 
 ---
 
 ## 9. Configuration and Secrets
-
-All secrets are stored in a `.env` file excluded from version control via `.gitignore`.
 
 ```
 ANTHROPIC_API_KEY=...
@@ -337,41 +384,29 @@ ADZUNA_APP_ID=...
 ADZUNA_API_KEY=...
 ```
 
-An `.env.example` file is committed to the repository to show the required structure without exposing values.
-
-The `data/source_documents/` folder is also excluded from version control — personal documents should never be committed to a public repository.
+Both `.env` and `data/source_documents/` are excluded from version control.
 
 ---
 
 ## 10. Testing Strategy
 
-This project adopts **Test Driven Development (TDD)** from `job_matcher.py` onwards. Tests for `job_fetcher.py` were written retroactively.
-
 **Framework:** `pytest`
 
-**Structure:**
 ```
 tests/
-├── test_job_fetcher.py     ✅ 22 tests passing
-├── test_profile_builder.py 🔲 Planned
-├── test_job_matcher.py     🔲 Next
-├── test_gap_analyser.py    🔲 Planned
-└── test_resume_tailor.py   🔲 Planned
+├── test_job_fetcher.py       ✅ 22 tests passing
+├── test_job_matcher.py       ✅ 41 tests passing
+├── test_profile_builder.py   🔲 Written, awaiting implementation
+├── test_gap_analyser.py      🔲 Planned
+└── test_resume_tailor.py     🔲 Planned
 ```
-
-**Approach:**
-- Agent logic is tested in isolation using mocked API responses — tests never make real API calls
-- Each test file covers: expected happy path, empty inputs, malformed inputs, and API failure scenarios
-- The TDD cycle for new agents: write failing tests → write minimum implementation → refactor
-- Boundary conditions are explicitly tested for all scored/labelled outputs
 
 ---
 
 ## 11. Deployment
 
-The app is deployed on **Streamlit Community Cloud** (free tier), connected directly to the GitHub repository. Pushes to `main` trigger automatic redeployment.
-
-Secrets are configured via the Streamlit Cloud dashboard and are never stored in the repository.
+Deployed on **Streamlit Community Cloud** (free tier). Pushes to `main` auto-redeploy.
+Secrets configured via Streamlit Cloud dashboard — never stored in the repository.
 
 **Live URL:** *(to be added on deployment)*
 
@@ -379,10 +414,11 @@ Secrets are configured via the Streamlit Cloud dashboard and are never stored in
 
 ## 12. Future Enhancements
 
-- **Application tracker:** Log which jobs have been applied for, with status and notes
-- **Cover letter generator:** Generate tailored cover letters alongside the CV
-- **Scheduled search:** Run searches automatically and surface new matches daily
-- **Spanish language filter:** Optionally filter out non-English listings for the Barcelona market
-- **Salary benchmarking:** Where salary data is available, surface it alongside match score
-- **Fuzzy skill matching:** Use `rapidfuzz` library for more sophisticated skill normalisation beyond lowercase/strip
-- **Profile versioning:** Track how the candidate profile evolves over time
+- **Application tracker** — log applications with status and notes
+- **Cover letter generator** — tailored cover letters alongside CV
+- **Scheduled search** — surface new matches automatically
+- **Spanish language filter** — optionally filter non-English Barcelona listings
+- **Salary benchmarking** — surface salary data alongside match score
+- **Fuzzy skill matching** — `rapidfuzz` for normalisation beyond lowercase/strip
+- **Profile versioning** — track how the candidate profile evolves over time
+- **Full profile editor** — add/remove skills directly in the UI (beyond proficiency-only editing)
