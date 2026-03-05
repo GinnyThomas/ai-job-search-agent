@@ -147,14 +147,19 @@ def _parse_match_response(response_text: str) -> dict:
         label = _get_match_label(score)
 
         # --- Skills — normalise for consistent comparison ---
+        # Guard the container type first: if Claude returns a string instead
+        # of a list (e.g. "Python, AWS"), iterating it character-by-character
+        # would produce garbage. We default to [] for any non-list value.
+        raw_matching = data.get("matching_skills", [])
         matching_skills = [
             normalise_skill(s)
-            for s in data.get("matching_skills", [])
+            for s in (raw_matching if isinstance(raw_matching, list) else [])
             if isinstance(s, str)
         ]
+        raw_missing = data.get("missing_skills", [])
         missing_skills = [
             normalise_skill(s)
-            for s in data.get("missing_skills", [])
+            for s in (raw_missing if isinstance(raw_missing, list) else [])
             if isinstance(s, str)
         ]
 

@@ -372,6 +372,42 @@ class TestParseMatchResponse:
         for skill in result["missing_skills"]:
             assert skill == skill.lower().strip()
 
+    def test_handles_string_instead_of_list_for_matching_skills(self):
+        """
+        Claude might return matching_skills as a comma-separated string
+        instead of a list e.g. "Python, AWS, Flask".
+        Iterating a string character-by-character would produce garbage.
+        We must return [] rather than explode or produce nonsense.
+        """
+        response = json.dumps({
+            "match_score": 70,
+            "summary": "Good match.",
+            "matching_skills": "Python, AWS, Flask",
+            "missing_skills": [],
+            "reasoning": "Strong overlap.",
+            "highlight_background": ""
+        })
+        result = _parse_match_response(response)
+        assert isinstance(result["matching_skills"], list)
+        assert result["matching_skills"] == []
+
+    def test_handles_string_instead_of_list_for_missing_skills(self):
+        """
+        Same protection for missing_skills — a string must not be iterated
+        character by character and must return [] instead.
+        """
+        response = json.dumps({
+            "match_score": 50,
+            "summary": "Partial match.",
+            "matching_skills": [],
+            "missing_skills": "Kubernetes, Terraform",
+            "reasoning": "Some gaps.",
+            "highlight_background": ""
+        })
+        result = _parse_match_response(response)
+        assert isinstance(result["missing_skills"], list)
+        assert result["missing_skills"] == []
+
 
 # ─────────────────────────────────────────────
 # match_job_to_profile tests
