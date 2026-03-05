@@ -1,13 +1,13 @@
 """
 Tests for agents/job_matcher.py
 
-Written BEFORE the implementation — this is TDD.
-All tests here will fail until job_matcher.py is built.
-That is intentional. A failing test is a precise description
-of behaviour that doesn't exist yet.
+Originally written before the implementation — this is TDD.
+These tests act as an executable specification of the expected
+behaviour of job_matcher.py and should pass against the current
+implementation.
 
 The cycle:
-  1. Run tests → all fail (Red)
+  1. Write or extend tests to describe behaviour (Red)
   2. Write minimum implementation to pass them (Green)
   3. Clean up the code without breaking tests (Refactor)
 """
