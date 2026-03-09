@@ -1,8 +1,8 @@
 """
 Tests for agents/profile_builder.py
 
-Written BEFORE the implementation — TDD Red phase.
-All tests will fail until profile_builder.py is built.
+Originally written before the implementation as part of a TDD “red phase”,
+these tests now serve as an executable specification for profile_builder.py.
 
 New concept in this file: tmp_path
 pytest provides a built-in fixture called tmp_path that creates a real
