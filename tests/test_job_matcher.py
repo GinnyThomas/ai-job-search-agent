@@ -22,6 +22,7 @@ from agents.job_matcher import (
     _get_match_label,
     normalise_skill,
     _parse_match_response,
+    _format_profile_for_prompt,
     match_job_to_profile,
 )
 
@@ -33,27 +34,73 @@ from agents.job_matcher import (
 @pytest.fixture
 def sample_profile():
     """
-    A realistic candidate profile — the kind profile_builder.py will produce.
-    Note it includes skills not on any single CV: Ruby, nursing domain knowledge.
-    This is the point of the profile — it knows more than any one CV.
+    A realistic candidate profile using the enriched schema from profile_builder.py.
+    technical_skills is a list of dicts with name, proficiency, last_used, and
+    is_current — not the old flat dict-of-categories format.
+    This is the only format profile_builder.py ever produces.
     """
     return {
         "full_name": "Ginny Thomas",
-        "current_role": "Software Engineer",
-        "technical_skills": {
-            "languages": ["Python", "JavaScript", "Ruby", "Scala", "Java"],
-            "frameworks": ["Flask", "React"],
-            "cloud": ["AWS"],
-            "tools": ["Git", "Docker"],
-            "databases": ["PostgreSQL"]
-        },
-        "domain_knowledge": ["healthcare", "fintech", "tax systems", "clinical assessment"],
+        "current_role": "Java Developer",
+        "technical_skills": [
+            {
+                "name": "python",
+                "proficiency": "Proficient",
+                "last_used": "2025",
+                "context": "Production use at HMRC",
+                "is_current": True
+            },
+            {
+                "name": "scala",
+                "proficiency": "Proficient",
+                "last_used": "2025",
+                "context": "Led Scala Academy at Capgemini",
+                "is_current": True
+            },
+            {
+                "name": "aws",
+                "proficiency": "Familiar",
+                "last_used": "2025",
+                "context": "AWS AI Practitioner certification",
+                "is_current": True
+            },
+            {
+                "name": "flask",
+                "proficiency": "Familiar",
+                "last_used": "2023",
+                "context": "Web framework used in bootcamp project",
+                "is_current": False
+            },
+            {
+                "name": "ruby",
+                "proficiency": "Basic",
+                "last_used": "2022",
+                "context": "Bootcamp project language",
+                "is_current": False
+            }
+        ],
+        "domain_knowledge": [
+            {
+                "domain": "healthcare",
+                "depth": "Expert",
+                "years": 10,
+                "context": "10 years as a nurse practitioner",
+                "is_current": False
+            },
+            {
+                "domain": "fintech",
+                "depth": "Familiar",
+                "years": 2,
+                "context": "Tax systems work at HMRC",
+                "is_current": False
+            }
+        ],
         "soft_skills": ["public speaking", "team leadership", "stakeholder communication"],
         "experience": [
             {
-                "role": "Software Engineer",
-                "company": "HMRC",
-                "dates": "2022–2025",
+                "role": "Java Developer",
+                "company": "Capgemini",
+                "dates": "2025",
                 "achievements": ["95% reduction in production alerts"]
             }
         ],
@@ -410,6 +457,111 @@ class TestParseMatchResponse:
 
 
 # ─────────────────────────────────────────────
+# _format_profile_for_prompt tests
+# Ensures the enriched profile schema (list of
+# skill dicts) is correctly formatted for the
+# Claude prompt. This was a real bug: the function
+# was written for the old flat format and called
+# .values() on a list, crashing silently and
+# causing every match to return score 0.
+# ─────────────────────────────────────────────
+
+class TestFormatProfileForPrompt:
+
+    @pytest.fixture
+    def enriched_profile(self):
+        """Profile using the enriched schema from profile_builder.py —
+        technical_skills is a list of dicts, not a dict of categories."""
+        return {
+            "full_name": "Ginny Thomas",
+            "current_role": "Java Developer",
+            "technical_skills": [
+                {
+                    "name": "scala",
+                    "proficiency": "Proficient",
+                    "last_used": "2025",
+                    "context": "Led Scala Academy",
+                    "is_current": True
+                },
+                {
+                    "name": "java",
+                    "proficiency": "Familiar",
+                    "last_used": "2025",
+                    "context": "Java Specialism courses",
+                    "is_current": True
+                },
+                {
+                    "name": "patient assessment",
+                    "proficiency": "Expert",
+                    "last_used": "2017",
+                    "context": "Advanced nursing practice",
+                    "is_current": False
+                }
+            ],
+            "domain_knowledge": [
+                {
+                    "domain": "healthcare",
+                    "depth": "Expert",
+                    "years": 10,
+                    "context": "10 years as a nurse practitioner",
+                    "is_current": False
+                }
+            ],
+            "soft_skills": ["leadership", "mentoring"],
+            "experience": [
+                {
+                    "role": "Java Developer",
+                    "company": "Capgemini",
+                    "dates": "2025",
+                    "achievements": ["Delivered 25 tickets ahead of schedule"]
+                }
+            ],
+            "education": ["MSc Nursing"],
+            "certifications": ["AWS AI Practitioner"],
+            "notable_achievements": ["Reduced alerts by 90%"],
+            "source_documents": ["cv_2025.pdf"]
+        }
+
+    def test_returns_string(self, enriched_profile):
+        """Must return a non-empty string."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_includes_current_skill_names(self, enriched_profile):
+        """Current skill names must appear in the formatted prompt."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "scala" in result
+        assert "java" in result
+
+    def test_includes_proficiency_for_current_skills(self, enriched_profile):
+        """Proficiency levels must be included so Claude can weight skills."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "Proficient" in result
+        assert "Familiar" in result
+
+    def test_includes_historical_skills(self, enriched_profile):
+        """Historical skills must be present — they represent real experience."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "patient assessment" in result
+
+    def test_includes_domain_knowledge(self, enriched_profile):
+        """Domain knowledge must be included for domain-specific role matching."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "healthcare" in result
+
+    def test_handles_empty_profile(self):
+        """Empty profile must not crash — returns a fallback string."""
+        result = _format_profile_for_prompt({})
+        assert isinstance(result, str)
+
+    def test_handles_none_profile(self):
+        """None profile must not crash."""
+        result = _format_profile_for_prompt(None)
+        assert isinstance(result, str)
+
+
+# ─────────────────────────────────────────────
 # match_job_to_profile tests
 # The main public function — orchestrates the
 # Claude call and passes the response to the parser.
@@ -527,8 +679,9 @@ class TestMatchJobToProfile:
         call_args = mock_client.messages.create.call_args
         prompt_content = str(call_args)
 
-        # The profile's skills must appear in the prompt
-        assert "Python" in prompt_content
+        # The profile's skills must appear in the prompt.
+        # Skill names are normalised to lowercase by profile_builder.
+        assert "python" in prompt_content
 
     @patch("agents.job_matcher.anthropic.Anthropic")
     def test_job_description_is_passed_to_claude(

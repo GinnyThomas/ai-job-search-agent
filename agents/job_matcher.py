@@ -197,19 +197,36 @@ def _format_profile_for_prompt(profile: dict) -> str:
     if profile.get("current_role"):
         parts.append(f"Current Role: {profile['current_role']}")
 
-    # Flatten all technical skills into one readable list
-    tech_skills = profile.get("technical_skills", {})
+    # Technical skills — split into current and historical with proficiency
+    # so Claude can weight recent production experience more heavily
+    tech_skills = profile.get("technical_skills", [])
     if tech_skills:
-        all_skills = []
-        for skills in tech_skills.values():
-            if isinstance(skills, list):
-                all_skills.extend(skills)
-        if all_skills:
-            parts.append(f"Technical Skills: {', '.join(all_skills)}")
+        current = [s for s in tech_skills if isinstance(s, dict) and s.get("is_current")]
+        historical = [s for s in tech_skills if isinstance(s, dict) and not s.get("is_current")]
 
+        if current:
+            current_lines = [
+                f"{s['name']} ({s.get('proficiency', 'Basic')})"
+                for s in current
+            ]
+            parts.append(f"Current Technical Skills: {', '.join(current_lines)}")
+
+        if historical:
+            historical_lines = [
+                f"{s['name']} ({s.get('proficiency', 'Basic')}, last used {s.get('last_used', 'unknown')})"
+                for s in historical
+            ]
+            parts.append(f"Historical Technical Skills: {', '.join(historical_lines)}")
+
+    # Domain knowledge — list of dicts with domain name and depth
     domain = profile.get("domain_knowledge", [])
     if domain:
-        parts.append(f"Domain Knowledge: {', '.join(domain)}")
+        domain_lines = [
+            f"{d.get('domain', '')} ({d.get('depth', '')})"
+            if isinstance(d, dict) else str(d)
+            for d in domain
+        ]
+        parts.append(f"Domain Knowledge: {', '.join(domain_lines)}")
 
     soft = profile.get("soft_skills", [])
     if soft:
