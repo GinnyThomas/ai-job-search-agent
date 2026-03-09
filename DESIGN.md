@@ -206,7 +206,7 @@ Every field returns an empty list rather than None — the UI never needs to gua
 - **Domain knowledge:** deduplicated by domain name.
 - **Soft skills:** deduplicated, case-insensitive.
 - **Scalar fields** (name, current_role): last document wins — pass documents in chronological order (oldest first).
-- **List fields** (experience, education, certifications, achievements): all documents contribute, duplicates removed.
+- **List fields** (experience, education, certifications, achievements): all documents contribute; entries are concatenated in a deterministic order, and no automatic deduplication is currently performed.
 
 ---
 
