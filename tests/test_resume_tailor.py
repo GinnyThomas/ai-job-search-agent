@@ -118,4 +118,3 @@ class TestParseTailorResponse:
         assert result["experience"] == []
         assert result["personal_projects"] == []
         assert result["cover_note"] == ""
-        
