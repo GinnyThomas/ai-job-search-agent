@@ -4,3 +4,5 @@ python-jobspy
 python-dotenv
 pandas
 requests
+pdfplumber
+python-docx
