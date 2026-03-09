@@ -79,7 +79,7 @@ Job hunting is inefficient in three specific ways this tool is designed to fix:
 
 **Responsibility:** Read all candidate source documents, extract a structured master profile with enriched skill metadata, and provide a display-ready format for the UI.
 
-**Status:** 🔲 Planned (tests written)
+**Status:** ✅ Implemented (tests written)
 
 **Supported file formats:** PDF, DOCX, plain text (.txt)
 
