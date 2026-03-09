@@ -326,3 +326,32 @@ class TestFetchAllJobs:
 
         mock_jobspy.assert_called_once_with("Python Developer", "Remote UK", 20)
         mock_adzuna.assert_called_once_with("Python Developer", "Remote UK", 20)
+
+    @patch("agents.job_fetcher.fetch_jobs_adzuna")
+    @patch("agents.job_fetcher.fetch_jobs_jobspy")
+    def test_handles_mixed_date_types_without_error(self, mock_jobspy, mock_adzuna):
+        """
+        JobSpy returns date_posted as datetime.date objects.
+        Adzuna returns date_posted as ISO strings.
+        Sorting a column with mixed types raises TypeError — we must
+        normalise to datetime before sorting.
+        """
+        import datetime
+        mock_jobspy.return_value = pd.DataFrame([
+            {
+                "title": "Python Dev",
+                "company": "Acme",
+                "date_posted": datetime.date(2025, 3, 1)
+            }
+        ])
+        mock_adzuna.return_value = pd.DataFrame([
+            {
+                "title": "Backend Engineer",
+                "company": "TechCorp",
+                "date_posted": "2025-03-09T10:00:00Z"
+            }
+        ])
+        # Must not raise TypeError
+        result = fetch_all_jobs("Python Developer", "Barcelona / Spain")
+        assert len(result) == 2
+        assert "date_posted" in result.columns

@@ -161,9 +161,18 @@ def fetch_all_jobs(
 
     if not all_jobs.empty:
         all_jobs = all_jobs.drop_duplicates(subset=["title", "company"], keep="first")
-        # Sort by date so newest jobs appear first
+        # Normalise date_posted before sorting — JobSpy returns datetime.date
+        # objects while Adzuna returns ISO strings. Mixing the two types causes
+        # a TypeError when pandas tries to compare them for sorting.
+        # pd.to_datetime handles both formats; errors='coerce' turns anything
+        # unparseable into NaT which sorts last.
         if "date_posted" in all_jobs.columns:
-            all_jobs = all_jobs.sort_values("date_posted", ascending=False)
+            all_jobs["date_posted"] = pd.to_datetime(
+                all_jobs["date_posted"], errors="coerce", utc=True
+            )
+            all_jobs = all_jobs.sort_values(
+                "date_posted", ascending=False, na_position="last"
+            )
 
     print(f"Total unique jobs found: {len(all_jobs)}")
     return all_jobs
