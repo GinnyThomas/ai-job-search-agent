@@ -98,7 +98,14 @@ with tab1:
         Path(SOURCE_DOCS_DIR).mkdir(parents=True, exist_ok=True)
 
         for f in uploaded_files:
-            dest = Path(SOURCE_DOCS_DIR) / f.name
+            # Sanitise the filename — Path(f.name).name strips any directory
+            # components (e.g. "../../config.py" becomes "config.py"),
+            # preventing path traversal outside data/source_documents/.
+            safe_name = Path(f.name).name
+            if safe_name != f.name:
+                st.warning(f"Skipping file with unsafe name: {f.name}")
+                continue
+            dest = Path(SOURCE_DOCS_DIR) / safe_name
             dest.write_bytes(f.read())
 
         with st.spinner("Reading your documents and building your profile…"):

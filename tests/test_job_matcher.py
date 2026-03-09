@@ -34,27 +34,73 @@ from agents.job_matcher import (
 @pytest.fixture
 def sample_profile():
     """
-    A realistic candidate profile — the kind profile_builder.py will produce.
-    Note it includes skills not on any single CV: Ruby, nursing domain knowledge.
-    This is the point of the profile — it knows more than any one CV.
+    A realistic candidate profile using the enriched schema from profile_builder.py.
+    technical_skills is a list of dicts with name, proficiency, last_used, and
+    is_current — not the old flat dict-of-categories format.
+    This is the only format profile_builder.py ever produces.
     """
     return {
         "full_name": "Ginny Thomas",
-        "current_role": "Software Engineer",
-        "technical_skills": {
-            "languages": ["Python", "JavaScript", "Ruby", "Scala", "Java"],
-            "frameworks": ["Flask", "React"],
-            "cloud": ["AWS"],
-            "tools": ["Git", "Docker"],
-            "databases": ["PostgreSQL"]
-        },
-        "domain_knowledge": ["healthcare", "fintech", "tax systems", "clinical assessment"],
+        "current_role": "Java Developer",
+        "technical_skills": [
+            {
+                "name": "python",
+                "proficiency": "Proficient",
+                "last_used": "2025",
+                "context": "Production use at HMRC",
+                "is_current": True
+            },
+            {
+                "name": "scala",
+                "proficiency": "Proficient",
+                "last_used": "2025",
+                "context": "Led Scala Academy at Capgemini",
+                "is_current": True
+            },
+            {
+                "name": "aws",
+                "proficiency": "Familiar",
+                "last_used": "2025",
+                "context": "AWS AI Practitioner certification",
+                "is_current": True
+            },
+            {
+                "name": "flask",
+                "proficiency": "Familiar",
+                "last_used": "2023",
+                "context": "Web framework used in bootcamp project",
+                "is_current": False
+            },
+            {
+                "name": "ruby",
+                "proficiency": "Basic",
+                "last_used": "2022",
+                "context": "Bootcamp project language",
+                "is_current": False
+            }
+        ],
+        "domain_knowledge": [
+            {
+                "domain": "healthcare",
+                "depth": "Expert",
+                "years": 10,
+                "context": "10 years as a nurse practitioner",
+                "is_current": False
+            },
+            {
+                "domain": "fintech",
+                "depth": "Familiar",
+                "years": 2,
+                "context": "Tax systems work at HMRC",
+                "is_current": False
+            }
+        ],
         "soft_skills": ["public speaking", "team leadership", "stakeholder communication"],
         "experience": [
             {
-                "role": "Software Engineer",
-                "company": "HMRC",
-                "dates": "2022–2025",
+                "role": "Java Developer",
+                "company": "Capgemini",
+                "dates": "2025",
                 "achievements": ["95% reduction in production alerts"]
             }
         ],
@@ -633,8 +679,9 @@ class TestMatchJobToProfile:
         call_args = mock_client.messages.create.call_args
         prompt_content = str(call_args)
 
-        # The profile's skills must appear in the prompt
-        assert "Python" in prompt_content
+        # The profile's skills must appear in the prompt.
+        # Skill names are normalised to lowercase by profile_builder.
+        assert "python" in prompt_content
 
     @patch("agents.job_matcher.anthropic.Anthropic")
     def test_job_description_is_passed_to_claude(
