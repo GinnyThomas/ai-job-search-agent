@@ -169,10 +169,17 @@ with tab1:
                 col_name.write(skill["name"])
 
                 current_prof = skill.get("proficiency", "Basic")
+                # Guard against unexpected values (e.g. hand-edited profile.json)
+                # — list.index() raises ValueError if the value isn't found.
+                safe_index = (
+                    PROFICIENCY_LEVELS.index(current_prof)
+                    if current_prof in PROFICIENCY_LEVELS
+                    else PROFICIENCY_LEVELS.index("Basic")
+                )
                 new_prof = col_prof.selectbox(
                     label=skill["name"],
                     options=PROFICIENCY_LEVELS,
-                    index=PROFICIENCY_LEVELS.index(current_prof),
+                    index=safe_index,
                     key=f"prof_current_{skill['name']}",
                     label_visibility="collapsed",
                 )
