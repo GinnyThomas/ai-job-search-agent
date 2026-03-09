@@ -326,3 +326,50 @@ class TestFetchAllJobs:
 
         mock_jobspy.assert_called_once_with("Python Developer", "Remote UK", 20)
         mock_adzuna.assert_called_once_with("Python Developer", "Remote UK", 20)
+
+    @patch("agents.job_fetcher.fetch_jobs_adzuna")
+    @patch("agents.job_fetcher.fetch_jobs_jobspy")
+    def test_handles_mixed_date_types_without_error(self, mock_jobspy, mock_adzuna):
+        """
+        JobSpy returns date_posted as datetime.date objects.
+        Adzuna returns date_posted as ISO strings (timezone-aware).
+        Sorting a column with mixed types raises TypeError — we must
+        normalise to UTC datetime before sorting.
+
+        This test pins down four properties of the fix:
+        1. No exception is raised
+        2. The column is a proper datetime dtype (not a mixed object column)
+        3. The dtype is timezone-aware UTC — pd.to_datetime(..., utc=True)
+        4. Rows are sorted newest-first (TechCorp Mar 9 > Acme Mar 1)
+        """
+        import datetime
+        mock_jobspy.return_value = pd.DataFrame([
+            {
+                "title": "Python Dev",
+                "company": "Acme",
+                "date_posted": datetime.date(2025, 3, 1)   # older
+            }
+        ])
+        mock_adzuna.return_value = pd.DataFrame([
+            {
+                "title": "Backend Engineer",
+                "company": "TechCorp",
+                "date_posted": "2025-03-09T10:00:00Z"      # newer, tz-aware string
+            }
+        ])
+        result = fetch_all_jobs("Python Developer", "Barcelona / Spain")
+
+        assert len(result) == 2
+        assert "date_posted" in result.columns
+
+        # The column must be datetime, not a mixed object column
+        assert pd.api.types.is_datetime64_any_dtype(result["date_posted"])
+
+        # pd.to_datetime(..., utc=True) produces this specific dtype
+        assert str(result["date_posted"].dtype) == "datetime64[ns, UTC]"
+
+        # Rows must be sorted newest-first
+        assert result["date_posted"].is_monotonic_decreasing
+
+        # Concrete proof: the newer job (TechCorp, Mar 9) is first
+        assert result.iloc[0]["company"] == "TechCorp"
