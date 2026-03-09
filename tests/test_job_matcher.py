@@ -22,6 +22,7 @@ from agents.job_matcher import (
     _get_match_label,
     normalise_skill,
     _parse_match_response,
+    _format_profile_for_prompt,
     match_job_to_profile,
 )
 
@@ -407,6 +408,111 @@ class TestParseMatchResponse:
         result = _parse_match_response(response)
         assert isinstance(result["missing_skills"], list)
         assert result["missing_skills"] == []
+
+
+# ─────────────────────────────────────────────
+# _format_profile_for_prompt tests
+# Ensures the enriched profile schema (list of
+# skill dicts) is correctly formatted for the
+# Claude prompt. This was a real bug: the function
+# was written for the old flat format and called
+# .values() on a list, crashing silently and
+# causing every match to return score 0.
+# ─────────────────────────────────────────────
+
+class TestFormatProfileForPrompt:
+
+    @pytest.fixture
+    def enriched_profile(self):
+        """Profile using the enriched schema from profile_builder.py —
+        technical_skills is a list of dicts, not a dict of categories."""
+        return {
+            "full_name": "Ginny Thomas",
+            "current_role": "Java Developer",
+            "technical_skills": [
+                {
+                    "name": "scala",
+                    "proficiency": "Proficient",
+                    "last_used": "2025",
+                    "context": "Led Scala Academy",
+                    "is_current": True
+                },
+                {
+                    "name": "java",
+                    "proficiency": "Familiar",
+                    "last_used": "2025",
+                    "context": "Java Specialism courses",
+                    "is_current": True
+                },
+                {
+                    "name": "patient assessment",
+                    "proficiency": "Expert",
+                    "last_used": "2017",
+                    "context": "Advanced nursing practice",
+                    "is_current": False
+                }
+            ],
+            "domain_knowledge": [
+                {
+                    "domain": "healthcare",
+                    "depth": "Expert",
+                    "years": 10,
+                    "context": "10 years as a nurse practitioner",
+                    "is_current": False
+                }
+            ],
+            "soft_skills": ["leadership", "mentoring"],
+            "experience": [
+                {
+                    "role": "Java Developer",
+                    "company": "Capgemini",
+                    "dates": "2025",
+                    "achievements": ["Delivered 25 tickets ahead of schedule"]
+                }
+            ],
+            "education": ["MSc Nursing"],
+            "certifications": ["AWS AI Practitioner"],
+            "notable_achievements": ["Reduced alerts by 90%"],
+            "source_documents": ["cv_2025.pdf"]
+        }
+
+    def test_returns_string(self, enriched_profile):
+        """Must return a non-empty string."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_includes_current_skill_names(self, enriched_profile):
+        """Current skill names must appear in the formatted prompt."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "scala" in result
+        assert "java" in result
+
+    def test_includes_proficiency_for_current_skills(self, enriched_profile):
+        """Proficiency levels must be included so Claude can weight skills."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "Proficient" in result
+        assert "Familiar" in result
+
+    def test_includes_historical_skills(self, enriched_profile):
+        """Historical skills must be present — they represent real experience."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "patient assessment" in result
+
+    def test_includes_domain_knowledge(self, enriched_profile):
+        """Domain knowledge must be included for domain-specific role matching."""
+        result = _format_profile_for_prompt(enriched_profile)
+        assert "healthcare" in result
+
+    def test_handles_empty_profile(self):
+        """Empty profile must not crash — returns a fallback string."""
+        result = _format_profile_for_prompt({})
+        assert isinstance(result, str)
+
+    def test_handles_none_profile(self):
+        """None profile must not crash."""
+        result = _format_profile_for_prompt(None)
+        assert isinstance(result, str)
 
 
 # ─────────────────────────────────────────────
