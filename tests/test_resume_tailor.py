@@ -46,6 +46,7 @@ class TestSafeDefaultTailored:
         assert isinstance(result["personal_projects"], list)
         assert isinstance(result["cover_note"], str)
 
+
 class TestParseTailorResponse:
 
     def test_parses_valid_json_response(self):
@@ -118,3 +119,127 @@ class TestParseTailorResponse:
         assert result["experience"] == []
         assert result["personal_projects"] == []
         assert result["cover_note"] == ""
+
+
+class TestTailorResume:
+
+    @pytest.fixture
+    def sample_profile(self):
+        return {
+            "full_name": "Virginia Thomas",
+            "current_role": "Java Developer",
+            "technical_skills": [
+                {"name": "Python", "proficiency": "Proficient", "is_current": True},
+                {"name": "Java", "proficiency": "Familiar", "is_current": True},
+            ],
+            "domain_knowledge": [
+                {"domain": "Healthcare", "depth": "Expert"}
+            ],
+            "soft_skills": ["communication", "problem solving"],
+            "experience": [
+                {
+                    "role": "Java Developer",
+                    "company": "Capgemini",
+                    "dates": "2022 - present",
+                    "achievements": ["Built REST APIs", "Led migration project"]
+                }
+            ],
+            "notable_achievements": ["Career changer from Nurse Practitioner"],
+        }
+
+    @pytest.fixture
+    def sample_job(self):
+        return {
+            "title": "Backend Engineer",
+            "company": "HealthTech Ltd",
+            "description": "Python backend role in digital health. FastAPI, REST APIs required."
+        }
+
+    @patch("agents.resume_tailor.anthropic.Anthropic")
+    def test_calls_claude_with_profile_job_and_base_cv(
+        self, mock_anthropic_class, sample_profile, sample_job
+    ):
+        """
+        The prompt sent to Claude must contain the job title, job description,
+        and content from the candidate profile. If any of these are missing,
+        the tailoring will be generic rather than targeted.
+        """
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text='{"summary": "Good fit.", "highlighted_skills": [], "experience": [], "personal_projects": [], "cover_note": ""}')]
+        )
+
+        tailor_resume(sample_profile, sample_job, base_cv_text="My CV content here.")
+
+        assert mock_client.messages.create.called
+        call_kwargs = mock_client.messages.create.call_args[1]
+        prompt = call_kwargs["messages"][0]["content"]
+
+        assert "Backend Engineer" in prompt
+        assert "Python backend role in digital health" in prompt
+        assert "My CV content here." in prompt
+
+    @patch("agents.resume_tailor.anthropic.Anthropic")
+    def test_returns_parsed_response_on_success(
+        self, mock_anthropic_class, sample_profile, sample_job
+    ):
+        """
+        When Claude returns valid JSON, the result must be a fully
+        populated dict matching our schema — not the safe default.
+        """
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[MagicMock(text=json.dumps({
+                "summary": "Strong fit for this healthtech role.",
+                "highlighted_skills": ["Python", "FastAPI"],
+                "experience": [
+                    {
+                        "role": "Java Developer",
+                        "company": "Capgemini",
+                        "dates": "2022 - present",
+                        "bullets": ["Built REST APIs serving 10k users"]
+                    }
+                ],
+                "personal_projects": [],
+                "cover_note": "Nursing background is directly relevant."
+            }))]
+        )
+
+        result = tailor_resume(sample_profile, sample_job, base_cv_text="My CV.")
+
+        assert result["summary"] == "Strong fit for this healthtech role."
+        assert "python" in [s.lower() for s in result["highlighted_skills"]]
+        assert len(result["experience"]) == 1
+        assert result["cover_note"] == "Nursing background is directly relevant."
+
+    @patch("agents.resume_tailor.anthropic.Anthropic")
+    def test_returns_safe_default_on_api_failure(
+        self, mock_anthropic_class, sample_profile, sample_job
+    ):
+        """
+        If the Claude API throws (network error, quota exceeded, etc.)
+        we must return the safe default — not crash the app.
+        """
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.side_effect = Exception("API timeout")
+
+        result = tailor_resume(sample_profile, sample_job, base_cv_text="My CV.")
+
+        assert result == _safe_default_tailored()
+
+    @patch("agents.resume_tailor.anthropic.Anthropic")
+    def test_returns_safe_default_when_no_base_cv_text(
+        self, mock_anthropic_class, sample_profile, sample_job
+    ):
+        """
+        base_cv_text is required for meaningful tailoring.
+        An empty string should return the safe default rather than
+        sending a useless prompt to Claude and wasting API credits.
+        """
+        result = tailor_resume(sample_profile, sample_job, base_cv_text="")
+
+        assert result == _safe_default_tailored()
+        assert not mock_anthropic_class.called
