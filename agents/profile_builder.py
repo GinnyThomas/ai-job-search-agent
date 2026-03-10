@@ -155,6 +155,22 @@ def _extract_text_from_file(path: str) -> str:
         return ""
 
 
+def extract_text_from_file(path: str) -> str:
+    """
+    Public wrapper around _extract_text_from_file.
+
+    Used by app.py to extract base CV text for resume tailoring
+    without coupling app.py to the private internals of this module.
+    """
+    return _extract_text_from_file(path)
+
+def extract_text_from_file(path: str) -> str:
+    """
+    Public wrapper around _extract_text_from_file.
+    Used by app.py to extract base CV text for resume tailoring.
+    """
+    return _extract_text_from_file(path)
+
 # ─────────────────────────────────────────────
 # Profile extraction
 # ─────────────────────────────────────────────
