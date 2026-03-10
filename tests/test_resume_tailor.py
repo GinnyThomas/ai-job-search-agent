@@ -111,13 +111,13 @@ class TestParseTailorResponse:
         assert result == _safe_default_tailored()
 
     def test_handles_json_wrapped_in_markdown_code_block(self):
-            """
-            Claude often wraps JSON in ```json ... ``` markdown blocks.
-            We must strip the wrapping and parse the inner JSON.
-            """
-            response = '```json\n{"summary": "Great fit.", "highlighted_skills": [], "experience": [], "personal_projects": [], "cover_note": ""}\n```'
-            result = _parse_tailor_response(response)
-            assert result["summary"] == "Great fit."
+        """
+        Claude often wraps JSON in ```json ... ``` markdown blocks.
+        We must strip the wrapping and parse the inner JSON.
+        """
+        response = '```json\n{"summary": "Great fit.", "highlighted_skills": [], "experience": [], "personal_projects": [], "cover_note": ""}\n```'
+        result = _parse_tailor_response(response)
+        assert result["summary"] == "Great fit."
 
     def test_missing_keys_fall_back_to_safe_empty_values(self):
         """
