@@ -32,18 +32,23 @@ def _extract_json_from_text(text: str) -> str:
     """
     Extract a JSON object from text that may contain surrounding content.
     Claude sometimes wraps JSON in markdown code blocks or adds prose before it.
+
+    Uses first-'{' to last-'}' extraction within code blocks to correctly
+    handle nested JSON objects (non-greedy '?' would stop at first '}').
     """
-    match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
-    if match:
-        return match.group(1)
+    for pattern in (r'```json\s*([\s\S]*?)\s*```', r'```\s*([\s\S]*?)\s*```'):
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            candidate = match.group(1)
+            start = candidate.find("{")
+            end = candidate.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return candidate[start:end + 1]
 
-    match = re.search(r'```\s*(\{.*?\})\s*```', text, re.DOTALL)
-    if match:
-        return match.group(1)
-
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        return match.group(0)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start:end + 1]
 
     return text
 
@@ -66,14 +71,14 @@ def _parse_tailor_response(response_text: str) -> dict:
         data = json.loads(json_text)
 
         return {
-            "contact_info": data.get("contact_info", ""),
-            "summary": data.get("summary", ""),
-            "highlighted_skills": data.get("highlighted_skills", []),
-            "experience": data.get("experience", []),
-            "personal_projects": data.get("personal_projects", []),
-            "education": data.get("education", []),
-            "certifications": data.get("certifications", []),
-            "cover_note": data.get("cover_note", "")
+            "contact_info": data.get("contact_info") or "",
+            "summary": data.get("summary") or "",
+            "highlighted_skills": data.get("highlighted_skills") or [],
+            "experience": data.get("experience") or [],
+            "personal_projects": data.get("personal_projects") or [],
+            "education": data.get("education") or [],
+            "certifications": data.get("certifications") or [],
+            "cover_note": data.get("cover_note") or ""
         }
 
     except (json.JSONDecodeError, ValueError, TypeError):

@@ -435,11 +435,17 @@ with tab2:
                                 tailored = tailor_resume(
                                     st.session_state.profile, job, base_cv_text
                                 )
-                            st.session_state.tailored_results[job_key] = tailored
+                            candidate_name = st.session_state.profile.get("full_name", "CV")
+                            st.session_state.tailored_results[job_key] = {
+                                "content": tailored,
+                                "docx_bytes": generate_docx(tailored, candidate_name),
+                            }
 
                 # Show tailored output if it exists for this job
-                tailored = st.session_state.tailored_results.get(job_key)
-                if tailored and tailored.get("summary"):
+                cached = st.session_state.tailored_results.get(job_key)
+                if cached:
+                    tailored = cached["content"]
+                if cached and tailored.get("summary"):
                     st.divider()
                     st.markdown("**✍️ Tailored CV Content**")
 
@@ -455,15 +461,13 @@ with tab2:
                         st.markdown("**Cover Note / Talking Points**")
                         st.info(tailored["cover_note"])
 
-                    # Download button — generate_docx returns bytes
-                    candidate_name = st.session_state.profile.get("full_name", "CV")
-                    docx_bytes = generate_docx(tailored, candidate_name)
+                    # Download button — bytes were generated at click time, not on every rerun
                     safe_company = "".join(
                         c for c in job.get("company", "company") if c.isalnum() or c in " _-"
                     ).strip()
                     st.download_button(
                         label="⬇️ Download Tailored CV (.docx)",
-                        data=docx_bytes,
+                        data=cached["docx_bytes"],
                         file_name=f"CV_{safe_company}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         key=f"download_{job_key}",
