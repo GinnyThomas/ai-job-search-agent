@@ -24,6 +24,7 @@ from agents.job_fetcher import (
     fetch_jobs_adzuna,
     fetch_all_jobs,
     get_market_options,
+    fetch_job_from_url,
 )
 
 
@@ -373,3 +374,127 @@ class TestFetchAllJobs:
 
         # Concrete proof: the newer job (TechCorp, Mar 9) is first
         assert result.iloc[0]["company"] == "TechCorp"
+
+
+# ─────────────────────────────────────────────
+# fetch_job_from_url tests
+# This function fetches a job posting from any
+# URL and returns the main body text.
+# ─────────────────────────────────────────────
+
+class TestFetchJobFromUrl:
+
+    @patch("agents.job_fetcher.requests.get")
+    def test_returns_text_from_valid_url(self, mock_get):
+        """Happy path: a reachable page returns its main text content."""
+        mock_response = MagicMock()
+        mock_response.text = """
+            <html>
+              <body>
+                <nav>Site navigation</nav>
+                <main>
+                  <h1>Senior Python Developer</h1>
+                  <p>We are looking for an experienced Python developer.</p>
+                  <p>You will work with FastAPI and PostgreSQL.</p>
+                </main>
+                <footer>Footer content</footer>
+              </body>
+            </html>
+        """
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = fetch_job_from_url("https://example.com/jobs/123")
+
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert "Senior Python Developer" in result
+        assert "FastAPI" in result
+
+    @patch("agents.job_fetcher.requests.get")
+    def test_strips_navigation_and_footer(self, mock_get):
+        """
+        Nav, footer, header, and script tags must be stripped.
+        Only the job content should remain.
+        """
+        mock_response = MagicMock()
+        mock_response.text = """
+            <html>
+              <body>
+                <nav>Log in | Sign up | About us</nav>
+                <header>Company Header</header>
+                <script>alert('tracking')</script>
+                <div class="job-description">
+                  <h2>Software Engineer</h2>
+                  <p>Join our team to build great things.</p>
+                </div>
+                <footer>Privacy Policy | Terms</footer>
+              </body>
+            </html>
+        """
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = fetch_job_from_url("https://example.com/jobs/456")
+
+        assert "Software Engineer" in result
+        assert "Log in" not in result
+        assert "Privacy Policy" not in result
+        assert "alert" not in result
+
+    @patch("agents.job_fetcher.requests.get")
+    def test_returns_empty_string_on_network_error(self, mock_get):
+        """
+        Connection errors (timeout, DNS failure, etc.) must return empty string.
+        The app should handle this gracefully and show a UI message.
+        """
+        mock_get.side_effect = Exception("Connection timed out")
+
+        result = fetch_job_from_url("https://example.com/jobs/789")
+
+        assert result == ""
+
+    @patch("agents.job_fetcher.requests.get")
+    def test_returns_empty_string_on_http_error(self, mock_get):
+        """
+        A 403 (blocked) or 404 (not found) must return empty string, not raise.
+        Many job boards block scrapers — we should fail gracefully.
+        """
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("403 Forbidden")
+        mock_get.return_value = mock_response
+
+        result = fetch_job_from_url("https://linkedin.com/jobs/view/99999")
+
+        assert result == ""
+
+    @patch("agents.job_fetcher.requests.get")
+    def test_sends_browser_like_user_agent(self, mock_get):
+        """
+        We must send a realistic User-Agent header to avoid trivial bot blocks.
+        Requests without a User-Agent are often rejected immediately.
+        """
+        mock_response = MagicMock()
+        mock_response.text = "<html><body><p>Job content</p></body></html>"
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        fetch_job_from_url("https://example.com/jobs/123")
+
+        call_kwargs = mock_get.call_args[1]
+        headers = call_kwargs.get("headers", {})
+        assert "User-Agent" in headers
+        # Should look like a real browser, not 'python-requests/x.y.z'
+        assert "Mozilla" in headers["User-Agent"]
+
+    @patch("agents.job_fetcher.requests.get")
+    def test_returns_empty_string_for_empty_page(self, mock_get):
+        """An empty or near-empty response body should return empty string."""
+        mock_response = MagicMock()
+        mock_response.text = "<html><body></body></html>"
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        result = fetch_job_from_url("https://example.com/jobs/empty")
+
+        assert result == ""

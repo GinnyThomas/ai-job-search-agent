@@ -1,6 +1,7 @@
 import os
 import requests
 import pandas as pd
+from bs4 import BeautifulSoup
 from jobspy import scrape_jobs
 from dotenv import load_dotenv
 
@@ -184,3 +185,39 @@ def get_market_options() -> list:
     Keeps the UI and the config in sync automatically.
     """
     return list(MARKET_CONFIG.keys())
+
+
+def fetch_job_from_url(url: str) -> str:
+    """
+    Fetch a job posting from a URL and return the main body text.
+
+    Strips navigation, headers, footers, and scripts so only the job
+    content is passed to the matcher/tailor. Uses Python's built-in
+    html.parser to avoid external C-library dependencies.
+
+    Returns an empty string if the request fails (blocked, timed out,
+    404, etc.) so the caller can show a graceful UI message.
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Strip boilerplate tags — we only want the job content
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n", strip=True)
+        return text if text.strip() else ""
+
+    except Exception:
+        return ""

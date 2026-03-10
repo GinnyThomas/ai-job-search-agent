@@ -3,7 +3,8 @@ import streamlit as st
 from pathlib import Path
 from dotenv import load_dotenv
 
-from agents.job_fetcher import fetch_all_jobs, get_market_options
+from agents.job_fetcher import fetch_all_jobs, get_market_options, fetch_job_from_url
+from agents.saved_jobs import load_saved_jobs, save_job, remove_saved_job
 from agents.job_matcher import match_job_to_profile
 from agents.profile_builder import (
     build_profile,
@@ -23,6 +24,7 @@ load_dotenv()
 # ─────────────────────────────────────────────
 PROFILE_PATH = "data/profile.json"
 SOURCE_DOCS_DIR = "data/source_documents"
+SAVED_JOBS_PATH = "data/saved_jobs.json"
 
 MATCH_LABEL_EMOJI = {
     "Strong": "🟢",
@@ -57,6 +59,9 @@ if "base_cv_filename" not in st.session_state:
 if "tailored_results" not in st.session_state:
     st.session_state.tailored_results = {}
 
+if "fit_check_result" not in st.session_state:
+    st.session_state.fit_check_result = None
+
 # ─────────────────────────────────────────────
 # Sidebar — profile status at a glance
 # ─────────────────────────────────────────────
@@ -81,7 +86,67 @@ st.divider()
 # ─────────────────────────────────────────────
 # Tabs
 # ─────────────────────────────────────────────
-tab1, tab2 = st.tabs(["👤 My Profile", "🔍 Search Jobs"])
+tab1, tab2, tab3 = st.tabs(["👤 My Profile", "🔍 Search Jobs", "🎯 Am I a good fit?"])
+
+
+# ─────────────────────────────────────────────
+# Helper — Tailor Resume UI block
+# Used in both Tab 2 (search results) and Tab 3
+# (saved jobs). widget_prefix keeps Streamlit
+# widget keys unique across tabs.
+# ─────────────────────────────────────────────
+def _render_tailor_section(job: dict, job_key: str, widget_prefix: str = "") -> None:
+    wk = f"{widget_prefix}{job_key}"
+
+    if st.button("✍️ Tailor Resume", key=f"tailor_{wk}"):
+        base_cv_filename = st.session_state.get("base_cv_filename")
+        if not base_cv_filename:
+            st.warning("Select your base CV in the My Profile tab first.")
+        else:
+            base_cv_path = Path(SOURCE_DOCS_DIR) / base_cv_filename
+            base_cv_text = extract_text_from_file(str(base_cv_path))
+            if not base_cv_text:
+                st.error("Could not read the base CV. Check the file is a valid PDF, DOCX, or TXT.")
+            else:
+                with st.spinner("Tailoring your CV for this role…"):
+                    tailored = tailor_resume(
+                        st.session_state.profile, job, base_cv_text
+                    )
+                candidate_name = st.session_state.profile.get("full_name", "CV")
+                st.session_state.tailored_results[job_key] = {
+                    "content": tailored,
+                    "docx_bytes": generate_docx(tailored, candidate_name),
+                }
+
+    cached = st.session_state.tailored_results.get(job_key)
+    if cached:
+        tailored = cached["content"]
+        if tailored.get("summary"):
+            st.divider()
+            st.markdown("**✍️ Tailored CV Content**")
+
+            if tailored.get("summary"):
+                st.markdown("**Summary**")
+                st.write(tailored["summary"])
+
+            if tailored.get("highlighted_skills"):
+                st.markdown("**Key Skills**")
+                st.write(", ".join(tailored["highlighted_skills"]))
+
+            if tailored.get("cover_note"):
+                st.markdown("**Cover Note / Talking Points**")
+                st.info(tailored["cover_note"])
+
+            safe_company = "".join(
+                c for c in job.get("company", "company") if c.isalnum() or c in " _-"
+            ).strip()
+            st.download_button(
+                label="⬇️ Download Tailored CV (.docx)",
+                data=cached["docx_bytes"],
+                file_name=f"CV_{safe_company}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key=f"download_{wk}",
+            )
 
 
 # ═════════════════════════════════════════════
@@ -414,62 +479,217 @@ with tab2:
                     with st.expander("Full reasoning"):
                         st.write(result["reasoning"])
 
-                job_url = job.get("job_url", "")
-                if job_url:
-                    st.link_button("View Job Posting →", job_url)
-
-                # ── Tailor Resume ─────────────────────────────────────
                 job_key = f"{job.get('title', '')}_{job.get('company', '')}"
 
-                if st.button("✍️ Tailor Resume", key=f"tailor_{job_key}"):
-                    base_cv_filename = st.session_state.get("base_cv_filename")
-                    if not base_cv_filename:
-                        st.warning("Select your base CV in the My Profile tab first.")
-                    else:
-                        base_cv_path = Path(SOURCE_DOCS_DIR) / base_cv_filename
-                        base_cv_text = extract_text_from_file(str(base_cv_path))
-                        if not base_cv_text:
-                            st.error("Could not read the base CV. Check the file is a valid PDF, DOCX, or TXT.")
-                        else:
-                            with st.spinner("Tailoring your CV for this role…"):
-                                tailored = tailor_resume(
-                                    st.session_state.profile, job, base_cv_text
-                                )
-                            candidate_name = st.session_state.profile.get("full_name", "CV")
-                            st.session_state.tailored_results[job_key] = {
-                                "content": tailored,
-                                "docx_bytes": generate_docx(tailored, candidate_name),
-                            }
+                col_link, col_save = st.columns([4, 1])
+                with col_link:
+                    job_url = job.get("job_url", "")
+                    if job_url:
+                        st.link_button("View Job Posting →", job_url)
+                with col_save:
+                    if st.button("🔖 Save", key=f"save_{job_key}"):
+                        save_job({
+                            "title": job.get("title", ""),
+                            "company": job.get("company", ""),
+                            "description": job.get("description", ""),
+                            "job_url": job.get("job_url", ""),
+                            "match_label": result["match_label"],
+                            "match_score": result["match_score"],
+                            "matching_skills": result.get("matching_skills", []),
+                            "missing_skills": result.get("missing_skills", []),
+                            "summary": result.get("summary", ""),
+                            "highlight_background": result.get("highlight_background", ""),
+                            "reasoning": result.get("reasoning", ""),
+                            "source": "search",
+                        }, SAVED_JOBS_PATH)
+                        st.success("Saved to 🎯 Am I a good fit?")
 
-                # Show tailored output if it exists for this job
-                cached = st.session_state.tailored_results.get(job_key)
-                if cached:
-                    tailored = cached["content"]
-                if cached and tailored.get("summary"):
-                    st.divider()
-                    st.markdown("**✍️ Tailored CV Content**")
-
-                    if tailored.get("summary"):
-                        st.markdown("**Summary**")
-                        st.write(tailored["summary"])
-
-                    if tailored.get("highlighted_skills"):
-                        st.markdown("**Key Skills**")
-                        st.write(", ".join(tailored["highlighted_skills"]))
-
-                    if tailored.get("cover_note"):
-                        st.markdown("**Cover Note / Talking Points**")
-                        st.info(tailored["cover_note"])
-
-                    # Download button — bytes were generated at click time, not on every rerun
-                    safe_company = "".join(
-                        c for c in job.get("company", "company") if c.isalnum() or c in " _-"
-                    ).strip()
-                    st.download_button(
-                        label="⬇️ Download Tailored CV (.docx)",
-                        data=cached["docx_bytes"],
-                        file_name=f"CV_{safe_company}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        key=f"download_{job_key}",
-                    )
+                _render_tailor_section(job, job_key, widget_prefix="t2_")
         
+# ═════════════════════════════════════════════
+# TAB 3 — AM I A GOOD FIT?
+# ═════════════════════════════════════════════
+with tab3:
+
+    if not st.session_state.profile:
+        st.warning(
+            "👤 Build your profile first in the **My Profile** tab "
+            "so roles can be matched against your skills."
+        )
+        st.stop()
+
+    # ── Input form ───────────────────────────────────────────────────
+    st.subheader("Analyse a Job")
+    st.write(
+        "Paste a URL or drop in the job description directly. "
+        "Optionally add a title and company so your tailored CV is labelled correctly."
+    )
+
+    col_url, col_paste = st.columns(2)
+    with col_url:
+        url_input = st.text_input(
+            "Job posting URL",
+            placeholder="https://example.com/jobs/123",
+        )
+    with col_paste:
+        paste_input = st.text_area(
+            "Or paste the job description",
+            height=120,
+            placeholder="Paste the full job description here…",
+        )
+
+    col_title_in, col_company_in = st.columns(2)
+    with col_title_in:
+        title_input = st.text_input(
+            "Job title (optional)",
+            placeholder="e.g. Senior Python Developer",
+        )
+    with col_company_in:
+        company_input = st.text_input(
+            "Company (optional)",
+            placeholder="e.g. Acme Corp",
+        )
+
+    if st.button("🎯 Analyse Fit", type="primary"):
+        description = ""
+
+        if url_input.strip():
+            with st.spinner("Fetching job posting…"):
+                description = fetch_job_from_url(url_input.strip())
+            if not description:
+                st.warning(
+                    "Couldn't fetch that URL — the site may block automated requests "
+                    "(LinkedIn, for example). Paste the job description in the box above instead."
+                )
+
+        if not description and paste_input.strip():
+            description = paste_input.strip()
+
+        if not description:
+            st.error("Please provide a URL or paste a job description to continue.")
+        else:
+            job = {
+                "title": title_input.strip() or "Unknown Role",
+                "company": company_input.strip() or "Unknown Company",
+                "description": description,
+                "job_url": url_input.strip() if url_input.strip() else "",
+                "source": "manual",
+            }
+            with st.spinner("Matching against your profile…"):
+                result = match_job_to_profile(st.session_state.profile, job)
+            result["_job"] = job
+            st.session_state.fit_check_result = result
+
+    # ── Analysis result ───────────────────────────────────────────────
+    if st.session_state.fit_check_result:
+        result = st.session_state.fit_check_result
+        job = result["_job"]
+        fit_job_key = f"{job.get('title', '')}_{job.get('company', '')}"
+        emoji = MATCH_LABEL_EMOJI.get(result["match_label"], "")
+
+        st.divider()
+        st.markdown(
+            f"### {emoji} {result['match_label']} Match — {result['match_score']}%"
+        )
+        st.markdown(
+            f"**{job.get('title', 'Unknown Role')}** at **{job.get('company', 'Unknown Company')}**"
+        )
+
+        col_match, col_missing = st.columns(2)
+        with col_match:
+            st.markdown("**✅ Matching skills**")
+            skills = result.get("matching_skills", [])
+            st.write(", ".join(skills) if skills else "None identified")
+        with col_missing:
+            st.markdown("**⚠️ Missing skills**")
+            missing = result.get("missing_skills", [])
+            st.write(", ".join(missing) if missing else "None identified")
+
+        if result.get("summary"):
+            st.write(result["summary"])
+
+        if result.get("highlight_background"):
+            st.info(f"💡 {result['highlight_background']}")
+
+        if result.get("reasoning"):
+            with st.expander("Full reasoning"):
+                st.write(result["reasoning"])
+
+        col_link_fit, col_save_fit = st.columns([4, 1])
+        with col_link_fit:
+            if job.get("job_url"):
+                st.link_button("View Job Posting →", job["job_url"])
+        with col_save_fit:
+            if st.button("🔖 Save this job", key="save_fit_check"):
+                save_job({
+                    "title": job.get("title", ""),
+                    "company": job.get("company", ""),
+                    "description": job.get("description", ""),
+                    "job_url": job.get("job_url", ""),
+                    "match_label": result["match_label"],
+                    "match_score": result["match_score"],
+                    "matching_skills": result.get("matching_skills", []),
+                    "missing_skills": result.get("missing_skills", []),
+                    "summary": result.get("summary", ""),
+                    "highlight_background": result.get("highlight_background", ""),
+                    "reasoning": result.get("reasoning", ""),
+                    "source": "manual",
+                }, SAVED_JOBS_PATH)
+                st.success("Saved!")
+
+        _render_tailor_section(job, fit_job_key, widget_prefix="t3_fit_")
+
+    # ── Saved jobs list ───────────────────────────────────────────────
+    st.divider()
+    saved = load_saved_jobs(SAVED_JOBS_PATH)
+
+    if not saved:
+        st.info(
+            "No saved jobs yet. Click **🔖 Save** on any job card — "
+            "from search results or after analysing a URL above — to build your list here."
+        )
+    else:
+        st.subheader(f"Saved Jobs ({len(saved)})")
+
+        for saved_job in saved:
+            sj_key = f"{saved_job.get('title', '')}_{saved_job.get('company', '')}"
+            sj_emoji = MATCH_LABEL_EMOJI.get(saved_job.get("match_label", ""), "")
+            sj_score = saved_job.get("match_score", "")
+            source_badge = "🔍" if saved_job.get("source") == "search" else "🔗"
+            sj_header = (
+                f"{sj_emoji} {sj_score}%  —  "
+                f"{saved_job.get('title', 'Unknown')} at {saved_job.get('company', 'Unknown')} "
+                f"{source_badge}"
+            )
+
+            with st.expander(sj_header):
+                col_match, col_missing = st.columns(2)
+                with col_match:
+                    st.markdown("**✅ Matching skills**")
+                    skills = saved_job.get("matching_skills", [])
+                    st.write(", ".join(skills) if skills else "None identified")
+                with col_missing:
+                    st.markdown("**⚠️ Missing skills**")
+                    missing = saved_job.get("missing_skills", [])
+                    st.write(", ".join(missing) if missing else "None identified")
+
+                if saved_job.get("summary"):
+                    st.write(saved_job["summary"])
+
+                if saved_job.get("highlight_background"):
+                    st.info(f"💡 {saved_job['highlight_background']}")
+
+                if saved_job.get("reasoning"):
+                    with st.expander("Full reasoning"):
+                        st.write(saved_job["reasoning"])
+
+                col_link_sj, col_remove = st.columns([4, 1])
+                with col_link_sj:
+                    if saved_job.get("job_url"):
+                        st.link_button("View Job Posting →", saved_job["job_url"])
+                with col_remove:
+                    if st.button("🗑 Remove", key=f"remove_{sj_key}"):
+                        remove_saved_job(sj_key, SAVED_JOBS_PATH)
+                        st.rerun()
+
+                _render_tailor_section(saved_job, sj_key, widget_prefix="t3_saved_")
