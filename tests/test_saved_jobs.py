@@ -26,13 +26,17 @@ def saved_jobs_path(tmp_path):
 
 @pytest.fixture
 def sample_job():
-    """A job dict in the shape our app produces."""
+    """
+    A job dict in the shape our app produces.
+    match_label must be one of "Strong" / "Potential" / "Weak" —
+    the values returned by match_job_to_profile (the UI appends "Match").
+    """
     return {
         "title": "Senior Python Developer",
         "company": "Acme Corp",
         "description": "We need a Python expert with FastAPI experience.",
         "job_url": "https://example.com/jobs/123",
-        "match_label": "Strong Match",
+        "match_label": "Strong",
         "match_score": 85,
         "source": "search",
     }
@@ -45,7 +49,7 @@ def second_job():
         "company": "TechCorp",
         "description": "Backend role with Python and Django.",
         "job_url": "https://example.com/jobs/456",
-        "match_label": "Good Match",
+        "match_label": "Potential",
         "match_score": 72,
         "source": "manual",
     }
@@ -86,6 +90,18 @@ class TestLoadSavedJobs:
 
         result = load_saved_jobs(saved_jobs_path)
         assert isinstance(result, list)
+
+    def test_returns_empty_list_when_file_contains_dict_not_list(self, saved_jobs_path):
+        """
+        Valid JSON that is not a list of dicts (e.g. a bare {}) must
+        return [] rather than causing 'for saved_job in saved:' to
+        iterate over dict keys and break the UI.
+        """
+        with open(saved_jobs_path, "w") as f:
+            json.dump({"title": "oops"}, f)
+
+        result = load_saved_jobs(saved_jobs_path)
+        assert result == []
 
 
 # ─────────────────────────────────────────────

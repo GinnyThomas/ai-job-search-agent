@@ -25,6 +25,7 @@ from agents.job_fetcher import (
     fetch_all_jobs,
     get_market_options,
     fetch_job_from_url,
+    _is_safe_url,
 )
 
 
@@ -498,3 +499,41 @@ class TestFetchJobFromUrl:
         result = fetch_job_from_url("https://example.com/jobs/empty")
 
         assert result == ""
+
+
+# ─────────────────────────────────────────────
+# _is_safe_url tests
+# ─────────────────────────────────────────────
+
+class TestIsSafeUrl:
+
+    def test_allows_https_public_domain(self):
+        assert _is_safe_url("https://example.com/jobs/123") is True
+
+    def test_allows_http_public_domain(self):
+        assert _is_safe_url("http://example.com/jobs/123") is True
+
+    def test_blocks_non_http_scheme(self):
+        assert _is_safe_url("ftp://example.com/file") is False
+        assert _is_safe_url("file:///etc/passwd") is False
+
+    def test_blocks_localhost_hostname(self):
+        assert _is_safe_url("http://localhost/admin") is False
+
+    def test_blocks_loopback_ipv4(self):
+        assert _is_safe_url("http://127.0.0.1/secret") is False
+
+    def test_blocks_private_ipv4(self):
+        assert _is_safe_url("http://192.168.1.1/router") is False
+        assert _is_safe_url("http://10.0.0.1/internal") is False
+
+    def test_blocks_link_local_aws_metadata(self):
+        """169.254.169.254 is the AWS instance metadata endpoint — must be blocked."""
+        assert _is_safe_url("http://169.254.169.254/latest/meta-data/") is False
+
+    @patch("agents.job_fetcher.requests.get")
+    def test_fetch_job_from_url_rejects_unsafe_url(self, mock_get):
+        """fetch_job_from_url must return '' for unsafe URLs without making a request."""
+        result = fetch_job_from_url("http://localhost/admin")
+        assert result == ""
+        mock_get.assert_not_called()

@@ -1,16 +1,20 @@
 """
 Persistence layer for saved jobs.
 
-Jobs are stored in a JSON file at the path provided by the caller (app.py
-passes SOURCE_DOCS_DIR / "saved_jobs.json"). Using an explicit path rather
-than a module-level constant makes this easy to test with tmp_path.
+Jobs are stored in a JSON file at the path provided by the caller.
+Using an explicit path parameter rather than a module-level constant
+makes this easy to test with pytest's tmp_path fixture.
 
 Job identity is determined by title + company. Saving the same job twice
 updates the existing record rather than creating a duplicate.
+
+Writes are atomic (tempfile + os.replace) so a crash mid-write cannot
+produce a partially-written or corrupt file.
 """
 
 import json
 import os
+import tempfile
 from typing import Dict, List
 
 
@@ -19,16 +23,37 @@ def _job_key(job: Dict) -> str:
     return f"{job.get('title', '')}_{job.get('company', '')}"
 
 
+def _write_jobs_atomic(jobs: List[Dict], path: str) -> None:
+    """
+    Write jobs to path atomically using a temporary file + os.replace.
+
+    os.replace is atomic on POSIX systems: the file is either fully
+    written or untouched — a crash mid-write cannot corrupt the target.
+    """
+    dir_name = os.path.dirname(os.path.abspath(path))
+    with tempfile.NamedTemporaryFile(
+        "w", dir=dir_name, delete=False, suffix=".tmp"
+    ) as tmp:
+        json.dump(jobs, tmp, indent=2, default=str)
+        tmp_name = tmp.name
+    os.replace(tmp_name, path)
+
+
 def load_saved_jobs(path: str) -> List[Dict]:
     """
     Load saved jobs from the JSON file at path.
-    Returns an empty list if the file doesn't exist or is corrupt.
+
+    Returns an empty list if the file doesn't exist, is corrupt, or
+    contains valid JSON that is not a list of dicts (e.g. a bare {}).
     """
     if not os.path.exists(path):
         return []
     try:
         with open(path, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+        if isinstance(data, list) and all(isinstance(item, dict) for item in data):
+            return data
+        return []
     except Exception:
         return []
 
@@ -49,8 +74,7 @@ def save_job(job: Dict, path: str) -> None:
     else:
         jobs.append(job)
 
-    with open(path, "w") as f:
-        json.dump(jobs, f, indent=2, default=str)
+    _write_jobs_atomic(jobs, path)
 
 
 def remove_saved_job(job_key: str, path: str) -> None:
@@ -60,6 +84,4 @@ def remove_saved_job(job_key: str, path: str) -> None:
     """
     jobs = load_saved_jobs(path)
     jobs = [j for j in jobs if _job_key(j) != job_key]
-
-    with open(path, "w") as f:
-        json.dump(jobs, f, indent=2, default=str)
+    _write_jobs_atomic(jobs, path)
