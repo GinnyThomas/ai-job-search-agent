@@ -2,6 +2,7 @@ import re
 import json
 import anthropic
 from dotenv import load_dotenv
+from agents.job_matcher import _format_profile_for_prompt
 
 load_dotenv()
 
@@ -109,15 +110,17 @@ def tailor_resume(profile: dict, job: dict, base_cv_text: str) -> dict:
         job_company = job.get("company", "")
         job_description = job.get("description", "")
 
-        current_role = profile.get("current_role", "")
         full_name = profile.get("full_name", "")
+        formatted_profile = _format_profile_for_prompt(profile)
 
         prompt = f"""You are a professional CV writer tailoring a candidate's CV for a specific job.
 
             CANDIDATE NAME: {full_name}
-            CURRENT ROLE: {current_role}
 
-            CANDIDATE'S CURRENT CV:
+            STRUCTURED PROFILE (skills with proficiency levels, domain knowledge, achievements):
+            {formatted_profile}
+
+            CANDIDATE'S CURRENT CV (use this as the base for wording and structure):
             {base_cv_text}
 
             JOB TO TAILOR FOR:
