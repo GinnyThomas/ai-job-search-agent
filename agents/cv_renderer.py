@@ -13,11 +13,16 @@ def generate_docx(tailored: dict, candidate_name: str) -> bytes:
 
     Structure:
         Name (large, bold)
+        Contact info (centred, small)
         ── Summary
-        ── Skills
+        ── Key Skills
         ── Experience (variable bullets per role)
         ── Personal Projects
-        ── Cover Note
+        ── Education
+        ── Certifications & Development
+
+    Cover note is intentionally excluded — it lives in the UI only,
+    not on the CV itself.
     """
     doc = Document()
 
@@ -34,6 +39,14 @@ def generate_docx(tailored: dict, candidate_name: str) -> bytes:
     name_run.bold = True
     name_run.font.size = Pt(20)
     name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # ── Contact info ──────────────────────────────────────────────────────
+    contact_info = tailored.get("contact_info", "")
+    if contact_info:
+        contact_para = doc.add_paragraph(contact_info)
+        contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        contact_para.runs[0].font.size = Pt(9)
+        contact_para.paragraph_format.space_after = Pt(4)
 
     def add_section_heading(text):
         para = doc.add_paragraph()
@@ -97,11 +110,23 @@ def generate_docx(tailored: dict, candidate_name: str) -> bytes:
             for bullet in project.get("bullets", []):
                 add_bullet(bullet)
 
-    # ── Cover Note ────────────────────────────────────────────────────────
-    if tailored.get("cover_note"):
-        add_section_heading("Cover Note / Talking Points")
-        cover_para = doc.add_paragraph(tailored["cover_note"])
-        cover_para.runs[0].font.size = Pt(10)
+    # ── Education ─────────────────────────────────────────────────────────
+    education = tailored.get("education", [])
+    if education:
+        add_section_heading("Education")
+        for item in education:
+            edu_para = doc.add_paragraph(item)
+            edu_para.runs[0].font.size = Pt(10)
+            edu_para.paragraph_format.space_after = Pt(2)
+
+    # ── Certifications ────────────────────────────────────────────────────
+    certifications = tailored.get("certifications", [])
+    if certifications:
+        add_section_heading("Certifications & Development")
+        for item in certifications:
+            cert_para = doc.add_paragraph(item)
+            cert_para.runs[0].font.size = Pt(10)
+            cert_para.paragraph_format.space_after = Pt(2)
 
     # ── Serialise to bytes ────────────────────────────────────────────────
     buffer = BytesIO()

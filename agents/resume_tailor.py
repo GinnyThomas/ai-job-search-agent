@@ -17,10 +17,13 @@ def _safe_default_tailored() -> dict:
     will iterate over lists and render strings without checking first.
     """
     return {
+        "contact_info": "",
         "summary": "",
         "highlighted_skills": [],
         "experience": [],
         "personal_projects": [],
+        "education": [],
+        "certifications": [],
         "cover_note": ""
     }
 
@@ -62,10 +65,13 @@ def _parse_tailor_response(response_text: str) -> dict:
         data = json.loads(json_text)
 
         return {
+            "contact_info": data.get("contact_info", ""),
             "summary": data.get("summary", ""),
             "highlighted_skills": data.get("highlighted_skills", []),
             "experience": data.get("experience", []),
             "personal_projects": data.get("personal_projects", []),
+            "education": data.get("education", []),
+            "certifications": data.get("certifications", []),
             "cover_note": data.get("cover_note", "")
         }
 
@@ -128,6 +134,7 @@ def tailor_resume(profile: dict, job: dict, base_cv_text: str) -> dict:
 
             Return ONLY a JSON object with this exact structure, no other text:
             {{
+                "contact_info": "<email | phone | LinkedIn | location — copied exactly from the CV>",
                 "summary": "<tailored professional summary paragraph>",
                 "highlighted_skills": ["<most relevant skill>", "<second most relevant>"],
                 "experience": [
@@ -144,6 +151,8 @@ def tailor_resume(profile: dict, job: dict, base_cv_text: str) -> dict:
                         "bullets": ["<tailored bullet>"]
                     }}
                 ],
+                "education": ["<degree or qualification, copied exactly from the CV>"],
+                "certifications": ["<certification or course, copied exactly from the CV>"],
                 "cover_note": "<2-3 talking points for a cover letter or intro email>"
             }}"""
 

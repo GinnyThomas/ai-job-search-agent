@@ -32,6 +32,9 @@ class TestSafeDefaultTailored:
         assert "experience" in result
         assert "personal_projects" in result
         assert "cover_note" in result
+        assert "contact_info" in result
+        assert "education" in result
+        assert "certifications" in result
 
     def test_all_values_are_safe_empty_types(self):
         """
@@ -45,6 +48,9 @@ class TestSafeDefaultTailored:
         assert isinstance(result["experience"], list)
         assert isinstance(result["personal_projects"], list)
         assert isinstance(result["cover_note"], str)
+        assert isinstance(result["contact_info"], str)
+        assert isinstance(result["education"], list)
+        assert isinstance(result["certifications"], list)
 
 
 class TestParseTailorResponse:
@@ -71,7 +77,10 @@ class TestParseTailorResponse:
                     "bullets": ["Demonstrates Python and API skills"]
                 }
             ],
-            "cover_note": "Highlight nursing background for healthtech roles."
+            "cover_note": "Highlight nursing background for healthtech roles.",
+            "contact_info": "ginnynjon@gmail.com | linkedin.com/in/ginny",
+            "education": ["BSc Nursing, University of X"],
+            "certifications": ["AWS Certified Developer"]
         })
         result = _parse_tailor_response(response)
         assert result["summary"] == "Strong fit for this backend role."
@@ -81,6 +90,9 @@ class TestParseTailorResponse:
         assert len(result["experience"][0]["bullets"]) == 2
         assert len(result["personal_projects"]) == 1
         assert result["cover_note"] == "Highlight nursing background for healthtech roles."
+        assert result["contact_info"] == "ginnynjon@gmail.com | linkedin.com/in/ginny"
+        assert result["education"] == ["BSc Nursing, University of X"]
+        assert result["certifications"] == ["AWS Certified Developer"]
 
     def test_returns_safe_default_on_empty_response(self):
         """
@@ -119,6 +131,9 @@ class TestParseTailorResponse:
         assert result["experience"] == []
         assert result["personal_projects"] == []
         assert result["cover_note"] == ""
+        assert result["contact_info"] == ""
+        assert result["education"] == []
+        assert result["certifications"] == []
 
 
 class TestTailorResume:
@@ -203,7 +218,10 @@ class TestTailorResume:
                     }
                 ],
                 "personal_projects": [],
-                "cover_note": "Nursing background is directly relevant."
+                "cover_note": "Nursing background is directly relevant.",
+                "contact_info": "ginnynjon@gmail.com | linkedin.com/in/ginny",
+                "education": ["BSc Nursing, University of X"],
+                "certifications": ["AWS Certified Developer"]
             }))]
         )
 
