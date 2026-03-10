@@ -6,3 +6,4 @@ pandas
 requests
 pdfplumber
 python-docx
+beautifulsoup4

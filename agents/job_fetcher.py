@@ -1,8 +1,12 @@
+import ipaddress
 import os
+import tempfile
 import requests
 import pandas as pd
+from bs4 import BeautifulSoup
 from jobspy import scrape_jobs
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -184,3 +188,81 @@ def get_market_options() -> list:
     Keeps the UI and the config in sync automatically.
     """
     return list(MARKET_CONFIG.keys())
+
+
+def _is_safe_url(url: str) -> bool:
+    """
+    Validate that a user-supplied URL is safe to fetch server-side.
+
+    Blocks non-HTTP(S) schemes and private/loopback destinations to
+    prevent SSRF attacks (e.g. requests to internal metadata endpoints
+    or cloud provider IMDSv1 at 169.254.169.254).
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+
+        hostname = parsed.hostname or ""
+
+        # Block well-known loopback hostnames
+        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            return False
+
+        # Block numeric private/loopback/link-local IPv4 and IPv6 addresses
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local:
+                return False
+        except ValueError:
+            pass  # hostname is a domain name, not a bare IP — that's fine
+
+        return True
+    except Exception:
+        return False
+
+
+def fetch_job_from_url(url: str) -> str:
+    """
+    Fetch a job posting from a URL and return the main body text.
+
+    Validates the URL to prevent SSRF before making any request.
+    Strips navigation, headers, footers, and scripts so only the job
+    content is passed to the matcher/tailor. Uses Python's built-in
+    html.parser to avoid external C-library dependencies.
+
+    Returns an empty string if the URL is unsafe, the request fails
+    (blocked, timed out, 404, etc.), or the page body is empty, so
+    the caller can show a graceful UI message.
+    """
+    if not _is_safe_url(url):
+        print(f"fetch_job_from_url: rejected unsafe URL '{url}'")
+        return ""
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Strip boilerplate tags — we only want the job content
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n", strip=True)
+        return text if text.strip() else ""
+
+    except requests.exceptions.RequestException as e:
+        print(f"fetch_job_from_url: network error fetching '{url}': {e}")
+        return ""
+    except Exception as e:
+        print(f"fetch_job_from_url: unexpected error processing '{url}': {e}")
+        return ""
