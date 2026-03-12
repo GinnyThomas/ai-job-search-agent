@@ -697,15 +697,26 @@ with tab3:
                 }, SAVED_JOBS_PATH)
                 st.success("Saved!")
 
+        if st.button("🔍 Analyse Gaps", key=f"gap_fit_{fit_job_key}"):
+            with st.spinner("Analysing gaps for this role…"):
+                gap = analyse_gaps(st.session_state.profile, job)
+            st.session_state.gap_analysis_results[fit_job_key] = gap
+
         fit_gap = st.session_state.gap_analysis_results.get(fit_job_key)
-        if fit_gap and any([
-            fit_gap.get("top_alignment_points"),
-            fit_gap.get("genuine_gaps"),
-            fit_gap.get("honest_assessment"),
-        ]):
-            st.divider()
-            st.markdown("**🔍 Gap Analysis**")
-            _render_gap_analysis(fit_gap)
+        if fit_gap is not None:
+            if any([
+                fit_gap.get("top_alignment_points"),
+                fit_gap.get("genuine_gaps"),
+                fit_gap.get("honest_assessment"),
+            ]):
+                st.divider()
+                st.markdown("**🔍 Gap Analysis**")
+                _render_gap_analysis(fit_gap)
+            else:
+                st.caption(
+                    "No description content to analyse — paste the full job description "
+                    "above and click **🎯 Analyse Fit** again for a gap analysis."
+                )
 
         _render_tailor_section(job, fit_job_key, widget_prefix="t3_fit_")
 
