@@ -699,8 +699,18 @@ with tab3:
 
         if st.button("🔍 Analyse Gaps", key=f"gap_fit_{fit_job_key}"):
             with st.spinner("Analysing gaps for this role…"):
-                gap = analyse_gaps(st.session_state.profile, job)
-            st.session_state.gap_analysis_results[fit_job_key] = gap
+                new_gap = analyse_gaps(st.session_state.profile, job)
+            if any([
+                new_gap.get("top_alignment_points"),
+                new_gap.get("genuine_gaps"),
+                new_gap.get("honest_assessment"),
+            ]):
+                st.session_state.gap_analysis_results[fit_job_key] = new_gap
+            else:
+                st.warning(
+                    "Gap analysis returned no results — the API may be busy. "
+                    "Try again in a moment."
+                )
 
         fit_gap = st.session_state.gap_analysis_results.get(fit_job_key)
         if fit_gap is not None:
