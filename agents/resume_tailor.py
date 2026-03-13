@@ -85,7 +85,44 @@ def _parse_tailor_response(response_text: str) -> dict:
         return _safe_default_tailored()
 
 
-def tailor_resume(profile: dict, job: dict, base_cv_text: str) -> dict:
+def _format_gap_analysis_for_prompt(gap_analysis: dict) -> str:
+    """
+    Format the gap analysis dict as a prompt section.
+    Returns an empty string when no gap analysis is available so the
+    prompt is unchanged for callers that don't pass one.
+    """
+    if not gap_analysis:
+        return ""
+
+    raw_alignment = gap_analysis.get("top_alignment_points")
+    alignment = [str(i) for i in raw_alignment] if isinstance(raw_alignment, list) else []
+
+    raw_gaps = gap_analysis.get("genuine_gaps")
+    gaps = [str(i) for i in raw_gaps] if isinstance(raw_gaps, list) else []
+
+    raw_framing = gap_analysis.get("recommended_framing")
+    framing = raw_framing if isinstance(raw_framing, str) else ""
+
+    if not any([alignment, gaps, framing]):
+        return ""
+
+    lines = ["\n            PRIOR GAP ANALYSIS (pre-computed writing brief — use this to guide emphasis):"]
+    if alignment:
+        lines.append(f"            Key strengths to lead with: {'; '.join(alignment)}")
+    if gaps:
+        lines.append(f"            Gaps to acknowledge or work around: {'; '.join(gaps)}")
+    if framing:
+        lines.append(f"            Recommended framing: {framing}")
+
+    return "\n".join(lines) + "\n"
+
+
+def tailor_resume(
+    profile: dict,
+    job: dict,
+    base_cv_text: str,
+    gap_analysis: dict = None,
+) -> dict:
     """
     The main public function. Tailor a CV to a specific job listing.
 
@@ -100,6 +137,10 @@ def tailor_resume(profile: dict, job: dict, base_cv_text: str) -> dict:
         base_cv_text: The raw text extracted from the candidate's current CV.
                       This is the structural foundation — Claude tailors it,
                       not replaces it.
+        gap_analysis: Optional output from analyse_gaps(). When provided, it
+                      is included in the prompt as a pre-computed writing brief
+                      so Claude writes from clear direction rather than doing
+                      analysis and writing simultaneously (two-call architecture).
 
     Returns:
         A tailored content dict conforming to the schema, or safe default
@@ -111,46 +152,64 @@ def tailor_resume(profile: dict, job: dict, base_cv_text: str) -> dict:
     try:
         client = anthropic.Anthropic()
 
-        job_title = job.get("title", "")
-        job_company = job.get("company", "")
+        job_title = job.get("title", "") or ""
+        job_company = job.get("company", "") or ""
         job_description = job.get("description", "")
+        # pandas fills missing fields with float NaN — coerce to string defensively
+        if not isinstance(job_description, str):
+            job_description = ""
 
         full_name = profile.get("full_name", "")
         formatted_profile = _format_profile_for_prompt(profile)
 
-        prompt = f"""You are a professional CV writer tailoring a candidate's CV for a specific job.
+        prompt = f"""You are a professional CV writer. Your output will be rendered directly \
+into a formatted Word document — write as a human CV writer would, not as an AI assistant \
+summarising a profile. Be concise, specific, and impactful.
 
             CANDIDATE NAME: {full_name}
 
-            STRUCTURED PROFILE (skills with proficiency levels, domain knowledge, achievements):
+            STRUCTURED PROFILE (source of truth for facts, skills, and achievements):
             {formatted_profile}
 
-            CANDIDATE'S CURRENT CV (use this as the base for wording and structure):
+            CANDIDATE'S CURRENT CV (use as a guide for tone and phrasing only — \
+where the profile and CV differ, the profile takes precedence):
             {base_cv_text}
 
             JOB TO TAILOR FOR:
             Title: {job_title}
             Company: {job_company}
             Description: {job_description}
-
+            {_format_gap_analysis_for_prompt(gap_analysis)}
             Rewrite the CV content to best fit this specific role. Rules:
-            - Keep all real experience — do not invent roles or skills that aren't in the CV
-            - Adjust bullet count per role based on relevance: more bullets for relevant roles, fewer for less relevant ones
-            - Lead the summary with what makes this candidate compelling for THIS role specifically
-            - If the candidate has an unusual background (e.g. previous career), surface it as a strength where genuinely relevant
-            - highlighted_skills should be ordered most-relevant-first for this job
+
+            EXPERIENCE BULLETS:
+            - Most relevant roles: 4-5 bullets. Supporting roles: 2-3 bullets. Older or less relevant roles: 1-2 bullets maximum.
+            - Every bullet must start with a strong past-tense action verb (Reduced, Built, Designed, Migrated, Led) — never "Responsible for" or "Worked on"
+            - Lead each bullet with the impact or outcome where possible, not the activity
+            - Keep all real experience — do not invent roles or skills that are not in the profile or CV
+
+            SUMMARY:
+            - Exactly 3-4 sentences. No more, no less.
+            - Sentence 1: who they are and their strongest credential for THIS role
+            - Sentence 2: most relevant technical strength for THIS specific job description
+            - Sentence 3: a genuine differentiator (unusual background, production impact, domain expertise)
+            - Sentence 4 (optional): forward-looking fit statement
+
+            OTHER:
+            - If the candidate has an unusual background (e.g. previous career in another field), surface it as a strength where genuinely relevant to this role
+            - highlighted_skills should be ordered most-relevant-first for this specific job
 
             Return ONLY a JSON object with this exact structure, no other text:
             {{
                 "contact_info": "<email | phone | LinkedIn | location — copied exactly from the CV>",
-                "summary": "<tailored professional summary paragraph>",
+                "summary": "<tailored professional summary — exactly 3-4 sentences>",
                 "highlighted_skills": ["<most relevant skill>", "<second most relevant>"],
                 "experience": [
                     {{
                         "role": "<job title>",
                         "company": "<company name>",
                         "dates": "<date range>",
-                        "bullets": ["<tailored bullet>", "<tailored bullet>"]
+                        "bullets": ["<impact-led bullet starting with action verb>"]
                     }}
                 ],
                 "personal_projects": [
@@ -161,12 +220,12 @@ def tailor_resume(profile: dict, job: dict, base_cv_text: str) -> dict:
                 ],
                 "education": ["<degree or qualification, copied exactly from the CV>"],
                 "certifications": ["<certification or course, copied exactly from the CV>"],
-                "cover_note": "<2-3 talking points for a cover letter or intro email>"
+                "cover_note": "<exactly 3 talking points for a cover letter, each a single sentence connecting a specific candidate achievement to a specific requirement in this job description — reference actual numbers, technologies, or experiences, not generic statements>"
             }}"""
 
         response = client.messages.create(
             model=SONNET_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": prompt}]
         )
 

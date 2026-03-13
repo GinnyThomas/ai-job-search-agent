@@ -16,6 +16,7 @@ from agents.profile_builder import (
 )
 from agents.resume_tailor import tailor_resume
 from agents.cv_renderer import generate_docx
+from agents.gap_analyser import analyse_gaps
 
 load_dotenv()
 
@@ -62,6 +63,9 @@ if "tailored_results" not in st.session_state:
 if "fit_check_result" not in st.session_state:
     st.session_state.fit_check_result = None
 
+if "gap_analysis_results" not in st.session_state:
+    st.session_state.gap_analysis_results = {}
+
 # ─────────────────────────────────────────────
 # Sidebar — profile status at a glance
 # ─────────────────────────────────────────────
@@ -95,6 +99,52 @@ tab1, tab2, tab3 = st.tabs(["👤 My Profile", "🔍 Search Jobs", "🎯 Am I a 
 # (saved jobs). widget_prefix keeps Streamlit
 # widget keys unique across tabs.
 # ─────────────────────────────────────────────
+def _has_gap_content(gap: dict) -> bool:
+    """
+    Return True if the gap analysis dict contains any renderable content.
+
+    Checks all six fields so a result that only has (e.g.) quick_wins or
+    recommended_framing still renders rather than being treated as empty.
+    """
+    return any([
+        gap.get("top_alignment_points"),
+        gap.get("genuine_gaps"),
+        gap.get("transferable_strengths"),
+        gap.get("quick_wins"),
+        gap.get("honest_assessment"),
+        gap.get("recommended_framing"),
+    ])
+
+
+def _render_gap_analysis(gap: dict) -> None:
+    """Render the gap analysis output — shared by Tab 2 cards and Tab 3."""
+    if gap.get("top_alignment_points"):
+        st.markdown("**✅ Key alignment points**")
+        for point in gap["top_alignment_points"]:
+            st.write(f"• {point}")
+
+    if gap.get("genuine_gaps"):
+        st.markdown("**⚠️ Genuine gaps**")
+        for g in gap["genuine_gaps"]:
+            st.write(f"• {g}")
+
+    if gap.get("transferable_strengths"):
+        st.markdown("**💡 Transferable strengths**")
+        for s in gap["transferable_strengths"]:
+            st.write(f"• {s}")
+
+    if gap.get("quick_wins"):
+        st.markdown("**🎯 Quick wins**")
+        for win in gap["quick_wins"]:
+            st.write(f"• {win}")
+
+    if gap.get("honest_assessment"):
+        st.info(gap["honest_assessment"])
+
+    if gap.get("recommended_framing"):
+        st.success(f"**Framing:** {gap['recommended_framing']}")
+
+
 def _render_tailor_section(job: dict, job_key: str, widget_prefix: str = "") -> None:
     wk = f"{widget_prefix}{job_key}"
 
@@ -108,9 +158,10 @@ def _render_tailor_section(job: dict, job_key: str, widget_prefix: str = "") -> 
             if not base_cv_text:
                 st.error("Could not read the base CV. Check the file is a valid PDF, DOCX, or TXT.")
             else:
+                gap = st.session_state.gap_analysis_results.get(job_key)
                 with st.spinner("Tailoring your CV for this role…"):
                     tailored = tailor_resume(
-                        st.session_state.profile, job, base_cv_text
+                        st.session_state.profile, job, base_cv_text, gap_analysis=gap
                     )
                 candidate_name = st.session_state.profile.get("full_name", "CV")
                 st.session_state.tailored_results[job_key] = {
@@ -504,6 +555,29 @@ with tab2:
                         }, SAVED_JOBS_PATH)
                         st.success("Saved to 🎯 Am I a good fit?")
 
+                if st.button("🔍 Analyse Gaps", key=f"gap_{job_key}"):
+                    with st.spinner("Analysing gaps for this role…"):
+                        new_gap = analyse_gaps(st.session_state.profile, job)
+                    if _has_gap_content(new_gap):
+                        st.session_state.gap_analysis_results[job_key] = new_gap
+                    else:
+                        st.warning(
+                            "Gap analysis returned no results — the API may be busy. "
+                            "Try again in a moment."
+                        )
+
+                gap = st.session_state.gap_analysis_results.get(job_key)
+                if gap is not None:
+                    if _has_gap_content(gap):
+                        st.divider()
+                        st.markdown("**🔍 Gap Analysis**")
+                        _render_gap_analysis(gap)
+                    else:
+                        st.caption(
+                            "No job description available to analyse — visit the job posting "
+                            "and paste the description into **🎯 Am I a good fit?** for a full gap analysis."
+                        )
+
                 _render_tailor_section(job, job_key, widget_prefix="t2_")
         
 # ═════════════════════════════════════════════
@@ -580,6 +654,11 @@ with tab3:
             result["_job"] = job
             st.session_state.fit_check_result = result
 
+            fit_key = f"{job.get('title', '')}_{job.get('company', '')}"
+            with st.spinner("Running deep gap analysis…"):
+                gap = analyse_gaps(st.session_state.profile, job)
+            st.session_state.gap_analysis_results[fit_key] = gap
+
     # ── Analysis result ───────────────────────────────────────────────
     if st.session_state.fit_check_result:
         result = st.session_state.fit_check_result
@@ -637,6 +716,29 @@ with tab3:
                 }, SAVED_JOBS_PATH)
                 st.success("Saved!")
 
+        if st.button("🔍 Analyse Gaps", key=f"gap_fit_{fit_job_key}"):
+            with st.spinner("Analysing gaps for this role…"):
+                new_gap = analyse_gaps(st.session_state.profile, job)
+            if _has_gap_content(new_gap):
+                st.session_state.gap_analysis_results[fit_job_key] = new_gap
+            else:
+                st.warning(
+                    "Gap analysis returned no results — the API may be busy. "
+                    "Try again in a moment."
+                )
+
+        fit_gap = st.session_state.gap_analysis_results.get(fit_job_key)
+        if fit_gap is not None:
+            if _has_gap_content(fit_gap):
+                st.divider()
+                st.markdown("**🔍 Gap Analysis**")
+                _render_gap_analysis(fit_gap)
+            else:
+                st.caption(
+                    "No description content to analyse — paste the full job description "
+                    "above and click **🎯 Analyse Fit** again for a gap analysis."
+                )
+
         _render_tailor_section(job, fit_job_key, widget_prefix="t3_fit_")
 
     # ── Saved jobs list ───────────────────────────────────────────────
@@ -691,5 +793,28 @@ with tab3:
                     if st.button("🗑 Remove", key=f"remove_{sj_key}"):
                         remove_saved_job(sj_key, SAVED_JOBS_PATH)
                         st.rerun()
+
+                if st.button("🔍 Analyse Gaps", key=f"gap_saved_{sj_key}"):
+                    with st.spinner("Analysing gaps for this role…"):
+                        new_sj_gap = analyse_gaps(st.session_state.profile, saved_job)
+                    if _has_gap_content(new_sj_gap):
+                        st.session_state.gap_analysis_results[sj_key] = new_sj_gap
+                    else:
+                        st.warning(
+                            "Gap analysis returned no results — the API may be busy. "
+                            "Try again in a moment."
+                        )
+
+                sj_gap = st.session_state.gap_analysis_results.get(sj_key)
+                if sj_gap is not None:
+                    if _has_gap_content(sj_gap):
+                        st.divider()
+                        st.markdown("**🔍 Gap Analysis**")
+                        _render_gap_analysis(sj_gap)
+                    else:
+                        st.caption(
+                            "No job description available to analyse — paste the description "
+                            "into **🎯 Am I a good fit?** above for a full gap analysis."
+                        )
 
                 _render_tailor_section(saved_job, sj_key, widget_prefix="t3_saved_")
