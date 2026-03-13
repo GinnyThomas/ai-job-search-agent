@@ -46,6 +46,34 @@ def _safe_default_gap_analysis() -> dict:
     }
 
 
+def _coerce_list_of_strings(value) -> list:
+    """
+    Ensure the returned value is a list of strings.
+
+    Claude occasionally returns a plain string or other non-list type for
+    list fields.  Iterating over a string produces individual characters,
+    which would silently corrupt the UI output.  Only accept an actual list;
+    coerce each element to str.  Return [] for anything else.
+    """
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
+
+
+def _coerce_string(value) -> str:
+    """
+    Ensure the returned value is a string.
+
+    None becomes "".  Non-string, non-None values are converted via str()
+    so they render rather than being silently dropped.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _extract_json_from_text(text: str) -> str:
     """
     Extract a JSON object from text that may contain surrounding content.
@@ -75,8 +103,10 @@ def _parse_gap_response(response_text: str) -> dict:
     Defensively handles every failure mode:
       - Empty or whitespace-only response
       - JSON wrapped in markdown code blocks
+      - JSON that parses to a non-dict (e.g. an array)
       - Missing keys (default to safe empty types)
-      - JSON null values (coerced via `or` fallback)
+      - JSON null values
+      - Wrong field types (string for a list field, number for a string field)
       - Completely malformed response
     """
     if not response_text or not response_text.strip():
@@ -86,13 +116,28 @@ def _parse_gap_response(response_text: str) -> dict:
         json_text = _extract_json_from_text(response_text)
         data = json.loads(json_text)
 
+        if not isinstance(data, dict):
+            return _safe_default_gap_analysis()
+
         return {
-            "top_alignment_points": data.get("top_alignment_points") or [],
-            "genuine_gaps": data.get("genuine_gaps") or [],
-            "transferable_strengths": data.get("transferable_strengths") or [],
-            "quick_wins": data.get("quick_wins") or [],
-            "honest_assessment": data.get("honest_assessment") or "",
-            "recommended_framing": data.get("recommended_framing") or "",
+            "top_alignment_points": _coerce_list_of_strings(
+                data.get("top_alignment_points")
+            ),
+            "genuine_gaps": _coerce_list_of_strings(
+                data.get("genuine_gaps")
+            ),
+            "transferable_strengths": _coerce_list_of_strings(
+                data.get("transferable_strengths")
+            ),
+            "quick_wins": _coerce_list_of_strings(
+                data.get("quick_wins")
+            ),
+            "honest_assessment": _coerce_string(
+                data.get("honest_assessment")
+            ),
+            "recommended_framing": _coerce_string(
+                data.get("recommended_framing")
+            ),
         }
 
     except (json.JSONDecodeError, ValueError, TypeError):

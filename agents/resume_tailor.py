@@ -94,9 +94,14 @@ def _format_gap_analysis_for_prompt(gap_analysis: dict) -> str:
     if not gap_analysis:
         return ""
 
-    alignment = gap_analysis.get("top_alignment_points") or []
-    gaps = gap_analysis.get("genuine_gaps") or []
-    framing = gap_analysis.get("recommended_framing") or ""
+    raw_alignment = gap_analysis.get("top_alignment_points")
+    alignment = [str(i) for i in raw_alignment] if isinstance(raw_alignment, list) else []
+
+    raw_gaps = gap_analysis.get("genuine_gaps")
+    gaps = [str(i) for i in raw_gaps] if isinstance(raw_gaps, list) else []
+
+    raw_framing = gap_analysis.get("recommended_framing")
+    framing = raw_framing if isinstance(raw_framing, str) else ""
 
     if not any([alignment, gaps, framing]):
         return ""

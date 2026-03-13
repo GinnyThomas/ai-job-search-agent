@@ -12,6 +12,8 @@ from unittest.mock import patch, MagicMock
 
 from agents.gap_analyser import (
     _safe_default_gap_analysis,
+    _coerce_list_of_strings,
+    _coerce_string,
     _parse_gap_response,
     analyse_gaps,
 )
@@ -108,6 +110,56 @@ class TestSafeDefaultGapAnalysis:
 
 
 # ─────────────────────────────────────────────
+# _coerce_list_of_strings tests
+# ─────────────────────────────────────────────
+
+class TestCoerceListOfStrings:
+
+    def test_returns_list_of_strings_unchanged(self):
+        assert _coerce_list_of_strings(["a", "b"]) == ["a", "b"]
+
+    def test_coerces_non_string_items_to_strings(self):
+        """Items that aren't strings should be converted, not dropped."""
+        assert _coerce_list_of_strings([1, 2.5, True]) == ["1", "2.5", "True"]
+
+    def test_returns_empty_list_for_none(self):
+        assert _coerce_list_of_strings(None) == []
+
+    def test_returns_empty_list_when_value_is_a_string(self):
+        """
+        Claude occasionally returns a plain string instead of a list.
+        Joining over the characters would produce garbage; return [] instead.
+        """
+        assert _coerce_list_of_strings("some string") == []
+
+    def test_returns_empty_list_for_dict(self):
+        assert _coerce_list_of_strings({"key": "value"}) == []
+
+    def test_returns_empty_list_for_integer(self):
+        assert _coerce_list_of_strings(42) == []
+
+
+# ─────────────────────────────────────────────
+# _coerce_string tests
+# ─────────────────────────────────────────────
+
+class TestCoerceString:
+
+    def test_returns_string_unchanged(self):
+        assert _coerce_string("hello") == "hello"
+
+    def test_returns_empty_string_for_none(self):
+        assert _coerce_string(None) == ""
+
+    def test_coerces_integer_to_string(self):
+        assert _coerce_string(42) == "42"
+
+    def test_coerces_list_to_string(self):
+        """Non-string non-None values should be str()-converted, not dropped."""
+        assert _coerce_string(["a", "b"]) == "['a', 'b']"
+
+
+# ─────────────────────────────────────────────
 # _parse_gap_response tests
 # ─────────────────────────────────────────────
 
@@ -168,6 +220,45 @@ class TestParseGapResponse:
         result = _parse_gap_response(with_nulls)
         assert result["top_alignment_points"] == []
         assert result["honest_assessment"] == ""
+
+    def test_returns_safe_default_when_json_is_not_a_dict(self):
+        """
+        If Claude returns a JSON array instead of an object, parsing must not
+        crash on .get() — return safe default instead.
+        """
+        result = _parse_gap_response('["point one", "point two"]')
+        assert result == _safe_default_gap_analysis()
+
+    def test_coerces_string_value_for_list_field_to_empty_list(self):
+        """
+        Claude occasionally returns a plain string for a list field.
+        Iterating over a string produces characters — coerce to [] instead.
+        """
+        bad_types = """{
+            "top_alignment_points": "Strong Python skills",
+            "genuine_gaps": [],
+            "transferable_strengths": [],
+            "quick_wins": [],
+            "honest_assessment": "Good fit.",
+            "recommended_framing": "Lead with Python."
+        }"""
+        result = _parse_gap_response(bad_types)
+        assert result["top_alignment_points"] == []
+
+    def test_coerces_non_string_value_for_assessment_field(self):
+        """
+        If Claude returns a number or list for a string field, coerce to str.
+        """
+        bad_assessment = """{
+            "top_alignment_points": [],
+            "genuine_gaps": [],
+            "transferable_strengths": [],
+            "quick_wins": [],
+            "honest_assessment": 42,
+            "recommended_framing": ""
+        }"""
+        result = _parse_gap_response(bad_assessment)
+        assert result["honest_assessment"] == "42"
 
 
 # ─────────────────────────────────────────────

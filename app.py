@@ -99,6 +99,23 @@ tab1, tab2, tab3 = st.tabs(["👤 My Profile", "🔍 Search Jobs", "🎯 Am I a 
 # (saved jobs). widget_prefix keeps Streamlit
 # widget keys unique across tabs.
 # ─────────────────────────────────────────────
+def _has_gap_content(gap: dict) -> bool:
+    """
+    Return True if the gap analysis dict contains any renderable content.
+
+    Checks all six fields so a result that only has (e.g.) quick_wins or
+    recommended_framing still renders rather than being treated as empty.
+    """
+    return any([
+        gap.get("top_alignment_points"),
+        gap.get("genuine_gaps"),
+        gap.get("transferable_strengths"),
+        gap.get("quick_wins"),
+        gap.get("honest_assessment"),
+        gap.get("recommended_framing"),
+    ])
+
+
 def _render_gap_analysis(gap: dict) -> None:
     """Render the gap analysis output — shared by Tab 2 cards and Tab 3."""
     if gap.get("top_alignment_points"):
@@ -540,16 +557,18 @@ with tab2:
 
                 if st.button("🔍 Analyse Gaps", key=f"gap_{job_key}"):
                     with st.spinner("Analysing gaps for this role…"):
-                        gap = analyse_gaps(st.session_state.profile, job)
-                    st.session_state.gap_analysis_results[job_key] = gap
+                        new_gap = analyse_gaps(st.session_state.profile, job)
+                    if _has_gap_content(new_gap):
+                        st.session_state.gap_analysis_results[job_key] = new_gap
+                    else:
+                        st.warning(
+                            "Gap analysis returned no results — the API may be busy. "
+                            "Try again in a moment."
+                        )
 
                 gap = st.session_state.gap_analysis_results.get(job_key)
                 if gap is not None:
-                    if any([
-                        gap.get("top_alignment_points"),
-                        gap.get("genuine_gaps"),
-                        gap.get("honest_assessment"),
-                    ]):
+                    if _has_gap_content(gap):
                         st.divider()
                         st.markdown("**🔍 Gap Analysis**")
                         _render_gap_analysis(gap)
@@ -700,11 +719,7 @@ with tab3:
         if st.button("🔍 Analyse Gaps", key=f"gap_fit_{fit_job_key}"):
             with st.spinner("Analysing gaps for this role…"):
                 new_gap = analyse_gaps(st.session_state.profile, job)
-            if any([
-                new_gap.get("top_alignment_points"),
-                new_gap.get("genuine_gaps"),
-                new_gap.get("honest_assessment"),
-            ]):
+            if _has_gap_content(new_gap):
                 st.session_state.gap_analysis_results[fit_job_key] = new_gap
             else:
                 st.warning(
@@ -714,11 +729,7 @@ with tab3:
 
         fit_gap = st.session_state.gap_analysis_results.get(fit_job_key)
         if fit_gap is not None:
-            if any([
-                fit_gap.get("top_alignment_points"),
-                fit_gap.get("genuine_gaps"),
-                fit_gap.get("honest_assessment"),
-            ]):
+            if _has_gap_content(fit_gap):
                 st.divider()
                 st.markdown("**🔍 Gap Analysis**")
                 _render_gap_analysis(fit_gap)
@@ -785,16 +796,18 @@ with tab3:
 
                 if st.button("🔍 Analyse Gaps", key=f"gap_saved_{sj_key}"):
                     with st.spinner("Analysing gaps for this role…"):
-                        sj_gap = analyse_gaps(st.session_state.profile, saved_job)
-                    st.session_state.gap_analysis_results[sj_key] = sj_gap
+                        new_sj_gap = analyse_gaps(st.session_state.profile, saved_job)
+                    if _has_gap_content(new_sj_gap):
+                        st.session_state.gap_analysis_results[sj_key] = new_sj_gap
+                    else:
+                        st.warning(
+                            "Gap analysis returned no results — the API may be busy. "
+                            "Try again in a moment."
+                        )
 
                 sj_gap = st.session_state.gap_analysis_results.get(sj_key)
                 if sj_gap is not None:
-                    if any([
-                        sj_gap.get("top_alignment_points"),
-                        sj_gap.get("genuine_gaps"),
-                        sj_gap.get("honest_assessment"),
-                    ]):
+                    if _has_gap_content(sj_gap):
                         st.divider()
                         st.markdown("**🔍 Gap Analysis**")
                         _render_gap_analysis(sj_gap)
