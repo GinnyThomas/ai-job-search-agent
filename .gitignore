@@ -207,4 +207,5 @@ marimo/_lsp/
 __marimo__/
 data/source_documents/
 data/profile.json
+data/settings.json
 .DS_Store

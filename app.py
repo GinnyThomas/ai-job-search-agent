@@ -1,9 +1,17 @@
 import copy
+import json
 import streamlit as st
 from pathlib import Path
 from dotenv import load_dotenv
 
-from agents.job_fetcher import fetch_all_jobs, get_market_options, fetch_job_from_url
+from agents.job_fetcher import (
+    fetch_all_jobs,
+    get_market_options,
+    fetch_job_from_url,
+    CUSTOM_LOCATION_LABEL,
+    MARKET_CONFIG,
+    DEFAULT_MARKET,
+)
 from agents.saved_jobs import load_saved_jobs, save_job, remove_saved_job
 from agents.job_matcher import match_job_to_profile
 from agents.profile_builder import (
@@ -26,6 +34,24 @@ load_dotenv()
 PROFILE_PATH = "data/profile.json"
 SOURCE_DOCS_DIR = "data/source_documents"
 SAVED_JOBS_PATH = "data/saved_jobs.json"
+SETTINGS_PATH = "data/settings.json"
+
+
+def _load_settings() -> dict:
+    """Load persisted app preferences from disk. Returns {} if not found."""
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_settings(settings: dict) -> None:
+    """Persist app preferences to disk."""
+    Path(SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
 
 MATCH_LABEL_EMOJI = {
     "Strong": "🟢",
@@ -55,7 +81,7 @@ if "match_results" not in st.session_state:
     st.session_state.match_results = []
 
 if "base_cv_filename" not in st.session_state:
-    st.session_state.base_cv_filename = None
+    st.session_state.base_cv_filename = _load_settings().get("base_cv_filename")
 
 if "tailored_results" not in st.session_state:
     st.session_state.tailored_results = {}
@@ -65,6 +91,13 @@ if "fit_check_result" not in st.session_state:
 
 if "gap_analysis_results" not in st.session_state:
     st.session_state.gap_analysis_results = {}
+    # Pre-populate from any saved jobs that already have a stored gap analysis
+    # so results survive app reloads without re-running the API.
+    for _sj in load_saved_jobs(SAVED_JOBS_PATH):
+        _sj_gap = _sj.get("gap_analysis")
+        if isinstance(_sj_gap, dict) and _sj_gap:
+            _sj_key = f"{_sj.get('title', '')}_{_sj.get('company', '')}"
+            st.session_state.gap_analysis_results[_sj_key] = _sj_gap
 
 # ─────────────────────────────────────────────
 # Sidebar — profile status at a glance
@@ -401,7 +434,7 @@ with tab1:
             st.divider()
             st.caption(f"Built from: {', '.join(display['source_documents'])}")
 
-            st.session_state.base_cv_filename = st.selectbox(
+            _selected_cv = st.selectbox(
                 "📄 Which document is your main CV?",
                 options=display["source_documents"],
                 index=(
@@ -411,6 +444,11 @@ with tab1:
                 ),
                 help="This document will be used as the base for tailoring.",
             )
+            if _selected_cv != st.session_state.base_cv_filename:
+                st.session_state.base_cv_filename = _selected_cv
+                _settings = _load_settings()
+                _settings["base_cv_filename"] = _selected_cv
+                _save_settings(_settings)
 
 
 # ═════════════════════════════════════════════
@@ -434,11 +472,24 @@ with tab2:
             "Job Title", placeholder="e.g. Python Developer"
         )
     with col_market:
-        market = st.radio(
-            "Market",
+        market_selection = st.selectbox(
+            "Market / Location",
             options=get_market_options(),
-            horizontal=True,
         )
+        # Show text input when user picks "Other"
+        custom_location = None
+        if market_selection == CUSTOM_LOCATION_LABEL:
+            custom_location = st.text_input(
+                "Enter location",
+                placeholder="e.g. Berlin, Germany or Remote Europe",
+            )
+        # Remote toggle — pre-checked for markets that default to remote
+        _default_remote = (
+            MARKET_CONFIG.get(market_selection, {}).get("is_remote", False)
+            if market_selection != CUSTOM_LOCATION_LABEL
+            else False
+        )
+        is_remote = st.checkbox("Remote only", value=_default_remote)
     with col_num:
         num_results = st.slider("Results per source", 5, 30, 10)
 
@@ -451,12 +502,21 @@ with tab2:
     if search_button:
         if not job_title:
             st.warning("Please enter a job title before searching.")
+        elif market_selection == CUSTOM_LOCATION_LABEL and not (custom_location or "").strip():
+            st.warning("Please enter a location or choose a predefined market.")
         else:
-            with st.spinner(f"Fetching {job_title} roles in {market}…"):
-                jobs = fetch_all_jobs(job_title, market, num_results)
+            _location_label = custom_location.strip() if custom_location else market_selection
+            with st.spinner(f"Fetching {job_title} roles — {_location_label}…"):
+                jobs = fetch_all_jobs(
+                    job_title,
+                    market=market_selection if market_selection != CUSTOM_LOCATION_LABEL else DEFAULT_MARKET,
+                    num_results=num_results,
+                    custom_location=custom_location.strip() if custom_location else None,
+                    is_remote_override=is_remote,
+                )
 
             if jobs.empty:
-                st.error("No jobs found. Try a different title or market.")
+                st.error("No jobs found. Try a different title or location.")
             else:
                 st.success(
                     f"Found {len(jobs)} roles. Matching against your profile…"
@@ -564,6 +624,7 @@ with tab2:
                         st.link_button("View Job Posting →", job_url)
                 with col_save:
                     if st.button("🔖 Save", key=f"save_{job_key}"):
+                        _gap_to_save = st.session_state.gap_analysis_results.get(job_key)
                         save_job({
                             "title": job.get("title", ""),
                             "company": job.get("company", ""),
@@ -577,6 +638,8 @@ with tab2:
                             "highlight_background": result.get("highlight_background", ""),
                             "reasoning": result.get("reasoning", ""),
                             "source": "search",
+                            # Include gap analysis if already run, so it survives reloads
+                            **({"gap_analysis": _gap_to_save} if _has_gap_content(_gap_to_save or {}) else {}),
                         }, SAVED_JOBS_PATH)
                         st.success("Saved to 🎯 Am I a good fit?")
 
@@ -731,6 +794,7 @@ with tab3:
                 st.link_button("View Job Posting →", job["job_url"])
         with col_save_fit:
             if st.button("🔖 Save this job", key="save_fit_check"):
+                _fit_gap_to_save = st.session_state.gap_analysis_results.get(fit_job_key)
                 save_job({
                     "title": job.get("title", ""),
                     "company": job.get("company", ""),
@@ -744,6 +808,8 @@ with tab3:
                     "highlight_background": result.get("highlight_background", ""),
                     "reasoning": result.get("reasoning", ""),
                     "source": "manual",
+                    # Include gap analysis so it survives reloads without re-running the API
+                    **({"gap_analysis": _fit_gap_to_save} if _has_gap_content(_fit_gap_to_save or {}) else {}),
                 }, SAVED_JOBS_PATH)
                 st.success("Saved!")
 
@@ -832,6 +898,9 @@ with tab3:
                             new_sj_gap = analyse_gaps(st.session_state.profile, saved_job)
                         if _has_gap_content(new_sj_gap):
                             st.session_state.gap_analysis_results[sj_key] = new_sj_gap
+                            # Persist into the saved job record so the result
+                            # survives app reloads without re-running the API.
+                            save_job({**saved_job, "gap_analysis": new_sj_gap}, SAVED_JOBS_PATH)
                         else:
                             # Clear any stale cached result so it doesn't render
                             # alongside the warning — the button is the only source
