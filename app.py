@@ -1,4 +1,5 @@
 import copy
+import json
 import streamlit as st
 from pathlib import Path
 from dotenv import load_dotenv
@@ -26,6 +27,24 @@ load_dotenv()
 PROFILE_PATH = "data/profile.json"
 SOURCE_DOCS_DIR = "data/source_documents"
 SAVED_JOBS_PATH = "data/saved_jobs.json"
+SETTINGS_PATH = "data/settings.json"
+
+
+def _load_settings() -> dict:
+    """Load persisted app preferences from disk. Returns {} if not found."""
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_settings(settings: dict) -> None:
+    """Persist app preferences to disk."""
+    Path(SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
 
 MATCH_LABEL_EMOJI = {
     "Strong": "🟢",
@@ -55,7 +74,7 @@ if "match_results" not in st.session_state:
     st.session_state.match_results = []
 
 if "base_cv_filename" not in st.session_state:
-    st.session_state.base_cv_filename = None
+    st.session_state.base_cv_filename = _load_settings().get("base_cv_filename")
 
 if "tailored_results" not in st.session_state:
     st.session_state.tailored_results = {}
@@ -401,7 +420,7 @@ with tab1:
             st.divider()
             st.caption(f"Built from: {', '.join(display['source_documents'])}")
 
-            st.session_state.base_cv_filename = st.selectbox(
+            _selected_cv = st.selectbox(
                 "📄 Which document is your main CV?",
                 options=display["source_documents"],
                 index=(
@@ -411,6 +430,11 @@ with tab1:
                 ),
                 help="This document will be used as the base for tailoring.",
             )
+            if _selected_cv != st.session_state.base_cv_filename:
+                st.session_state.base_cv_filename = _selected_cv
+                _settings = _load_settings()
+                _settings["base_cv_filename"] = _selected_cv
+                _save_settings(_settings)
 
 
 # ═════════════════════════════════════════════
