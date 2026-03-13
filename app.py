@@ -575,6 +575,10 @@ with tab2:
                         if _has_gap_content(new_gap):
                             st.session_state.gap_analysis_results[job_key] = new_gap
                         else:
+                            # Clear any stale cached result so it doesn't render
+                            # alongside the warning — the button is the only source
+                            # of results here (no auto-run), so stale data is misleading.
+                            st.session_state.gap_analysis_results.pop(job_key, None)
                             st.warning(
                                 "Gap analysis returned no results — the API may be busy. "
                                 "Try again in a moment."
@@ -819,6 +823,10 @@ with tab3:
                         if _has_gap_content(new_sj_gap):
                             st.session_state.gap_analysis_results[sj_key] = new_sj_gap
                         else:
+                            # Clear any stale cached result so it doesn't render
+                            # alongside the warning — the button is the only source
+                            # of results here (no auto-run), so stale data is misleading.
+                            st.session_state.gap_analysis_results.pop(sj_key, None)
                             st.warning(
                                 "Gap analysis returned no results — the API may be busy. "
                                 "Try again in a moment."
