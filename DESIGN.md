@@ -2,7 +2,7 @@
 
 **Author:** Ginny Thomas
 **Status:** In Progress
-**Last Updated:** March 2026
+**Last Updated:** March 2026 (current)
 
 ---
 
@@ -45,10 +45,10 @@ Job hunting is inefficient in three specific ways this tool is designed to fix:
 ## 4. Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                     app.py (Streamlit UI)                │
-│    Tab 1: My Profile  |  Tab 2: Search Jobs              │
-└───────────┬──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                          app.py (Streamlit UI)                         │
+│   Tab 1: My Profile  |  Tab 2: Search Jobs  |  Tab 3: Am I a Fit?     │
+└───────────┬────────────────────────────────────────────────────────────┘
             │
             ▼
 ┌─────────────────────┐
@@ -65,11 +65,31 @@ Job hunting is inefficient in three specific ways this tool is designed to fix:
 │   job_fetcher.py    │   │   job_matcher.py    │
 └─────────┬───────────┘   └─────────┬───────────┘
           └────────────┬────────────┘
+                       │
                        ▼
-          ┌─────────────────────┐     ┌──────────────────────┐
-          │  gap_analyser.py    │     │  resume_tailor.py    │
-          └─────────────────────┘     └──────────────────────┘
+          ┌─────────────────────┐
+          │  gap_analyser.py    │  Two-call architecture: analysis first,
+          └──────────┬──────────┘  then tailoring from a clear brief.
+                     │
+                     ▼
+          ┌──────────────────────┐    ┌──────────────────────┐
+          │  resume_tailor.py    │───▶│  cv_renderer.py      │
+          └──────────────────────┘    │  (.docx generation)  │
+                                      └──────────────────────┘
+
+┌─────────────────────┐
+│  saved_jobs.py      │  Atomic JSON persistence for bookmarked jobs.
+└─────────────────────┘
 ```
+
+### Two-Call Architecture
+
+Gap analysis and resume tailoring are deliberately split into two API calls:
+
+1. **`analyse_gaps(profile, job)`** — Runs first. Produces a structured brief: alignment points, genuine gaps, transferable strengths, quick wins, honest assessment, recommended framing.
+2. **`tailor_resume(profile, job, gap_analysis)`** — Consumes the brief. Writes the CV from clear direction rather than doing analysis and writing simultaneously.
+
+This improves tailoring quality and makes the gap brief independently useful in the UI — the candidate can read and act on the analysis before deciding whether to apply.
 
 ---
 
@@ -212,7 +232,7 @@ Every field returns an empty list rather than None — the UI never needs to gua
 
 ### 5.2 `agents/job_fetcher.py`
 
-**Status:** ✅ Built and tested (22 tests passing)
+**Status:** ✅ Built and tested (38 tests passing)
 
 **Markets supported:**
 | Market | Sources | Adzuna Endpoint |
@@ -221,11 +241,15 @@ Every field returns an empty list rather than None — the UI never needs to gua
 | Remote UK | LinkedIn, Indeed, Glassdoor, Adzuna | `gb` |
 | Remote US | LinkedIn, Indeed, Glassdoor, Adzuna | `us` |
 
+Market configuration is data-driven — adding a new market requires only a new entry in `MARKET_CONFIG`. Nothing else in the code changes.
+
+`fetch_job_from_url(url)` scrapes individual job postings by URL for use in the "Am I a good fit?" tab.
+
 ---
 
 ### 5.3 `agents/job_matcher.py`
 
-**Status:** ✅ Built and tested (41 tests passing)
+**Status:** ✅ Built and tested (50 tests passing)
 
 **Scoring thresholds:**
 ```python
@@ -246,26 +270,68 @@ Technical Skills:
 
 ### 5.4 `agents/gap_analyser.py`
 
-**Status:** 🔲 Planned
+**Status:** ✅ Implemented (28 tests passing)
+
+**Schema returned:**
+```python
+{
+    "top_alignment_points":    list[str],  # Specific skill/experience matches
+    "genuine_gaps":            list[str],  # Skills the job needs that are missing
+    "transferable_strengths":  list[str],  # Non-obvious value from background
+    "quick_wins":              list[str],  # Actionable steps (with time estimates)
+    "honest_assessment":       str,        # 2-3 sentence realistic evaluation
+    "recommended_framing":     str,        # Positioning angle for the CV writer
+}
+```
+
+**Defensive design:**
+- `_coerce_list_of_strings(value)` — converts non-list responses (plain string, None, dict) to `[]` instead of silently iterating characters
+- `_coerce_string(value)` — converts None → `""`, non-string → `str()`
+- `_parse_gap_response()` guards against: empty response, markdown-wrapped JSON, JSON arrays (not dicts), null fields, wrong field types, malformed JSON
+- Pre-checks job description before API call — distinguishes "no description" from "API error"
+- On exception, attaches `_error` field to return dict so UI can show the actual error string
 
 ---
 
 ### 5.5 `agents/resume_tailor.py`
 
-**Status:** 🔲 Planned
+**Status:** ✅ Implemented (11 tests passing)
+
+Takes the candidate profile, job, and gap analysis brief (from `analyse_gaps`), and generates a tailored ATS-optimised resume as structured text. The gap brief provides the writing direction so Claude doesn't have to do analysis and writing simultaneously.
+
+`_format_gap_analysis_for_prompt()` type-checks all fields before joining (guards against wrong types from Claude's output).
 
 ---
 
-### 5.6 `app.py` (Streamlit Frontend)
+### 5.6 `agents/saved_jobs.py`
 
-**Status:** 🔧 In Progress
+**Status:** ✅ Implemented (14 tests passing)
 
-**UI structure — two tabs:**
+JSON persistence layer for bookmarked jobs. Key properties:
+- Jobs are identified by `title + company` — saving the same job twice updates rather than duplicates
+- Writes are atomic using `tempfile + os.replace` — a crash mid-write cannot corrupt the file
+- `load_saved_jobs()`, `save_job()`, `remove_saved_job()` with explicit path parameter for easy testing with `tmp_path`
+
+---
+
+### 5.7 `agents/cv_renderer.py`
+
+**Status:** ✅ Implemented
+
+Takes tailored resume text from `resume_tailor.py` and renders a formatted `.docx` file for download. Used in the "Tailor My CV" flow in Tab 2 and Tab 3.
+
+---
+
+### 5.8 `app.py` (Streamlit Frontend)
+
+**Status:** ✅ Implemented
+
+**UI structure — three tabs:**
 
 ```
-┌─────────────────────────────────────────┐
-│  TABS: [👤 My Profile] [🔍 Search Jobs] │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  TABS: [👤 My Profile] [🔍 Search Jobs] [🎯 Am I a fit?] │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -325,27 +391,63 @@ Results table: ranked by match score
   columns: title | company | location | score | label | date | link
 
 Job detail panel (on row click):
-  - Match reasoning
-  - Matching skills / missing skills
-  - Highlighted background strengths
-  - Gap analysis
-  - [Tailor Resume → .docx download]
+  - Match reasoning (score, label, skills matched / missing)
+  - [💾 Save Job]
+  - [Analyse Gaps] → shows full gap analysis panel
+  - [Tailor My CV] → calls resume_tailor → .docx download
 ```
+
+The "Analyse Gaps" button uses a **preserve-and-warn** pattern: if a new API call fails, the previously computed result is cleared and a warning shown (rather than silently showing stale results).
+
+---
+
+#### Tab 3 — Am I a Good Fit?
+
+Designed for jobs found outside the search tab — via LinkedIn, a recruiter email, or any URL.
+
+```
+[Job URL input]  OR  [Paste job description directly]
+
+[🔍 Analyse Fit] button:
+  → match_job_to_profile (score + reasoning)
+  → analyse_gaps (full brief, auto-runs on fit analysis)
+  → displays: score, gaps, alignment points, quick wins
+
+[Analyse Gaps] — re-run gap analysis manually
+[Tailor My CV] — generate tailored .docx
+
+Saved Jobs list:
+  Each saved job shows its gap analysis (if available)
+  with [Analyse Gaps] and [Tailor My CV] per job
+```
+
+**Tab 3 vs Tab 2 preserve-and-warn difference:** On Tab 3's main fit result panel, a failed gap re-run *preserves* the auto-run result (which was good) rather than clearing it. On Tab 2 and saved jobs, a failed re-run *clears* the stale result and shows a warning (since the button is the only source — no auto-run to fall back to).
 
 ---
 
 ## 6. Data Flow
 
 ```
-User uploads source documents
+User uploads source documents (PDF, DOCX, TXT)
         ↓
-profile_builder.py → data/profile.json
+profile_builder.py → data/profile.json  (max_tokens=4096 to handle rich career histories)
         ↓
 User reviews profile in Tab 1 → adjusts proficiency if needed
+  (selectbox selection persisted to data/settings.json)
         ↓
-User searches in Tab 2 → job_fetcher → job_matcher → ranked results
+Tab 2: User searches → job_fetcher → job_matcher → ranked results table
         ↓
-User selects job → gap_analyser → resume_tailor → .docx download
+User selects job → analyse_gaps → structured brief shown in UI
+        ↓
+User clicks "Tailor My CV" → tailor_resume (uses gap brief) → cv_renderer → .docx download
+
+Tab 3 (parallel path — for jobs found externally):
+  URL or paste → fetch_job_from_url / direct text
+        ↓
+  match_job_to_profile + analyse_gaps (auto-runs together)
+        ↓
+  "Tailor My CV" → .docx download
+  "💾 Save Job" → data/saved_jobs.json
 ```
 
 ---
@@ -359,8 +461,12 @@ data/
 │   ├── cv_2022.pdf
 │   └── yearend_2024.pdf
 ├── profile.json          # Generated — do not edit manually (use Tab 1 for proficiency)
+├── saved_jobs.json       # gitignored — bookmarked jobs with gap analysis results
+├── settings.json         # gitignored — persisted preferences (e.g. selected base CV)
 └── .gitkeep
 ```
+
+**Note on Streamlit Cloud:** `data/` uses an ephemeral filesystem on Streamlit Community Cloud. `profile.json`, `saved_jobs.json`, and `settings.json` are lost on app restart. Users must rebuild their profile each session when using the hosted version.
 
 ---
 
@@ -391,15 +497,26 @@ Both `.env` and `data/source_documents/` are excluded from version control.
 ## 10. Testing Strategy
 
 **Framework:** `pytest`
+**Approach:** TDD — tests written before implementation throughout. Real API calls are never made in tests; `anthropic.Anthropic` is mocked.
 
 ```
 tests/
-├── test_job_fetcher.py       ✅ 22 tests passing
-├── test_job_matcher.py       ✅ 41 tests passing
-├── test_profile_builder.py   🔲 Written, awaiting implementation
-├── test_gap_analyser.py      🔲 Planned
-└── test_resume_tailor.py     🔲 Planned
+├── test_profile_builder.py   ✅ 57 tests passing
+├── test_job_fetcher.py       ✅ 38 tests passing
+├── test_job_matcher.py       ✅ 50 tests passing
+├── test_gap_analyser.py      ✅ 28 tests passing
+├── test_resume_tailor.py     ✅ 11 tests passing
+└── test_saved_jobs.py        ✅ 14 tests passing
+
+Total: 198 tests
 ```
+
+**Test patterns used:**
+- Fixtures for sample profiles, jobs, and valid API responses
+- `@patch("agents.X.anthropic.Anthropic")` to mock all Claude API calls
+- Defensive parsing tests: empty response, markdown-wrapped JSON, null fields, wrong types, JSON arrays
+- Atomic write tests using `pytest`'s `tmp_path` fixture
+- NaN guard tests (pandas fills missing fields with float NaN, not empty string)
 
 ---
 
@@ -408,12 +525,13 @@ tests/
 Deployed on **Streamlit Community Cloud** (free tier). Pushes to `main` auto-redeploy.
 Secrets configured via Streamlit Cloud dashboard — never stored in the repository.
 
-**Live URL:** *(to be added on deployment)*
+**Live URL:** Deployed on Streamlit Community Cloud — accessible from any browser.
 
 ---
 
 ## 12. Future Enhancements
 
+- **Custom location / remote toggle** — flexible location input beyond the three preset markets, with a separate "remote only" toggle
 - **Application tracker** — log applications with status and notes
 - **Cover letter generator** — tailored cover letters alongside CV
 - **Scheduled search** — surface new matches automatically
@@ -422,3 +540,4 @@ Secrets configured via Streamlit Cloud dashboard — never stored in the reposit
 - **Fuzzy skill matching** — `rapidfuzz` for normalisation beyond lowercase/strip
 - **Profile versioning** — track how the candidate profile evolves over time
 - **Full profile editor** — add/remove skills directly in the UI (beyond proficiency-only editing)
+- **Persistent storage on Streamlit Cloud** — save profile and saved jobs across sessions

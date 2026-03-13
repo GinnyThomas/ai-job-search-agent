@@ -17,7 +17,7 @@ ADZUNA_API_KEY = os.getenv("ADZUNA_API_KEY")
 # Market configurations
 # Each entry defines everything that changes between markets:
 # where we search, which Adzuna country endpoint to hit,
-# which Indeed country to use, and whether to filter for remote.
+# which Indeed country to use, and the default remote setting.
 #
 # To add a new market later, just add a new entry here.
 # Nothing else in the code needs to change.
@@ -46,22 +46,33 @@ MARKET_CONFIG = {
 # The default market if none is specified
 DEFAULT_MARKET = "Barcelona / Spain"
 
+# Sentinel value used by the UI to indicate a user-typed custom location.
+# When selected, the app passes the typed location directly to fetch_all_jobs
+# via the custom_location parameter instead of looking up a market config.
+CUSTOM_LOCATION_LABEL = "Other (type below)"
+
 
 def fetch_jobs_jobspy(
     job_title: str,
     market: str = DEFAULT_MARKET,
-    num_results: int = 20
+    num_results: int = 20,
+    is_remote_override: bool = None,
 ) -> pd.DataFrame:
     """
     Fetch live jobs from LinkedIn, Indeed, and Glassdoor using JobSpy.
 
     When searching a remote market, we append 'remote' to the search term
     so the job boards surface remote-filtered results.
+
+    is_remote_override: when provided, overrides the market config's default
+    is_remote setting. Allows the caller to request remote results for any
+    market (e.g. "remote jobs in Barcelona").
     """
     config = MARKET_CONFIG.get(market, MARKET_CONFIG[DEFAULT_MARKET])
+    is_remote = is_remote_override if is_remote_override is not None else config["is_remote"]
 
-    # For remote markets, add 'remote' to the search term to improve results
-    search_term = f"{job_title} remote" if config["is_remote"] else job_title
+    # For remote searches, add 'remote' to the search term to improve results
+    search_term = f"{job_title} remote" if is_remote else job_title
 
     try:
         jobs = scrape_jobs(
@@ -71,7 +82,7 @@ def fetch_jobs_jobspy(
             results_wanted=num_results,
             hours_old=72,
             country_indeed=config["indeed_country"],
-            is_remote=config["is_remote"]
+            is_remote=is_remote
         )
         # Tag each result with its source market so we know where it came from
         if not jobs.empty:
@@ -83,16 +94,54 @@ def fetch_jobs_jobspy(
         return pd.DataFrame()
 
 
+def _fetch_jobs_jobspy_custom(
+    job_title: str,
+    location: str,
+    is_remote: bool = False,
+    num_results: int = 20,
+) -> pd.DataFrame:
+    """
+    Fetch jobs from JobSpy for a user-supplied location string.
+
+    Used when the user types a custom location rather than selecting a
+    predefined market. Adzuna is skipped because we don't have a country
+    code for arbitrary locations. Results are tagged with location so the
+    UI can display where the search was run.
+    """
+    search_term = f"{job_title} remote" if is_remote else job_title
+
+    try:
+        jobs = scrape_jobs(
+            site_name=["linkedin", "indeed", "glassdoor"],
+            search_term=search_term,
+            location=location,
+            results_wanted=num_results,
+            hours_old=72,
+            is_remote=is_remote
+        )
+        if not jobs.empty:
+            jobs["market"] = location
+        return jobs
+
+    except Exception as e:
+        print(f"JobSpy fetch failed for custom location '{location}': {e}")
+        return pd.DataFrame()
+
+
 def fetch_jobs_adzuna(
     job_title: str,
     market: str = DEFAULT_MARKET,
-    num_results: int = 20
+    num_results: int = 20,
+    is_remote_override: bool = None,
 ) -> pd.DataFrame:
     """
     Fetch live jobs from Adzuna API.
 
     Adzuna uses country-specific endpoints (es, gb, us),
     which we look up from MARKET_CONFIG.
+
+    is_remote_override: when provided, overrides the market config's default
+    is_remote setting.
     """
     if not ADZUNA_APP_ID or not ADZUNA_API_KEY:
         print("Adzuna API credentials not found in .env — skipping Adzuna fetch.")
@@ -100,11 +149,12 @@ def fetch_jobs_adzuna(
 
     config = MARKET_CONFIG.get(market, MARKET_CONFIG[DEFAULT_MARKET])
     country = config["adzuna_country"]
+    is_remote = is_remote_override if is_remote_override is not None else config["is_remote"]
 
     url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
 
-    # For remote markets, add 'remote' to the search term
-    search_term = f"{job_title} remote" if config["is_remote"] else job_title
+    # For remote searches, add 'remote' to the search term
+    search_term = f"{job_title} remote" if is_remote else job_title
 
     params = {
         "app_id": ADZUNA_APP_ID,
@@ -148,18 +198,33 @@ def fetch_jobs_adzuna(
 def fetch_all_jobs(
     job_title: str,
     market: str = DEFAULT_MARKET,
-    num_results: int = 20
+    num_results: int = 20,
+    custom_location: str = None,
+    is_remote_override: bool = None,
 ) -> pd.DataFrame:
     """
     The main public function called by the app.
 
-    Fetches from all sources for the given market,
-    combines results, and removes duplicates.
-    """
-    print(f"Fetching '{job_title}' jobs — market: {market}")
+    Fetches from all sources for the given market, combines results,
+    and removes duplicates.
 
-    jobspy_results = fetch_jobs_jobspy(job_title, market, num_results)
-    adzuna_results = fetch_jobs_adzuna(job_title, market, num_results)
+    custom_location: when provided, overrides the market and searches
+    the given location string directly via JobSpy. Adzuna is skipped
+    because arbitrary locations have no country code to look up.
+
+    is_remote_override: when provided, overrides the market config's
+    default is_remote setting for all sources.
+    """
+    if custom_location:
+        location_label = custom_location
+        is_remote = is_remote_override if is_remote_override is not None else False
+        print(f"Fetching '{job_title}' jobs — custom location: {location_label}, remote: {is_remote}")
+        jobspy_results = _fetch_jobs_jobspy_custom(job_title, custom_location, is_remote, num_results)
+        adzuna_results = pd.DataFrame()  # Adzuna requires a known country code
+    else:
+        print(f"Fetching '{job_title}' jobs — market: {market}")
+        jobspy_results = fetch_jobs_jobspy(job_title, market, num_results, is_remote_override)
+        adzuna_results = fetch_jobs_adzuna(job_title, market, num_results, is_remote_override)
 
     all_jobs = pd.concat([jobspy_results, adzuna_results], ignore_index=True)
 
@@ -184,10 +249,11 @@ def fetch_all_jobs(
 
 def get_market_options() -> list:
     """
-    Returns the list of available markets for use in the Streamlit UI.
+    Returns the list of available markets for use in the Streamlit UI,
+    including the sentinel value that signals a custom typed location.
     Keeps the UI and the config in sync automatically.
     """
-    return list(MARKET_CONFIG.keys())
+    return list(MARKET_CONFIG.keys()) + [CUSTOM_LOCATION_LABEL]
 
 
 def _is_safe_url(url: str) -> bool:

@@ -4,7 +4,14 @@ import streamlit as st
 from pathlib import Path
 from dotenv import load_dotenv
 
-from agents.job_fetcher import fetch_all_jobs, get_market_options, fetch_job_from_url
+from agents.job_fetcher import (
+    fetch_all_jobs,
+    get_market_options,
+    fetch_job_from_url,
+    CUSTOM_LOCATION_LABEL,
+    MARKET_CONFIG,
+    DEFAULT_MARKET,
+)
 from agents.saved_jobs import load_saved_jobs, save_job, remove_saved_job
 from agents.job_matcher import match_job_to_profile
 from agents.profile_builder import (
@@ -458,11 +465,24 @@ with tab2:
             "Job Title", placeholder="e.g. Python Developer"
         )
     with col_market:
-        market = st.radio(
-            "Market",
+        market_selection = st.selectbox(
+            "Market / Location",
             options=get_market_options(),
-            horizontal=True,
         )
+        # Show text input when user picks "Other"
+        custom_location = None
+        if market_selection == CUSTOM_LOCATION_LABEL:
+            custom_location = st.text_input(
+                "Enter location",
+                placeholder="e.g. Berlin, Germany or Remote Europe",
+            )
+        # Remote toggle — pre-checked for markets that default to remote
+        _default_remote = (
+            MARKET_CONFIG.get(market_selection, {}).get("is_remote", False)
+            if market_selection != CUSTOM_LOCATION_LABEL
+            else False
+        )
+        is_remote = st.checkbox("Remote only", value=_default_remote)
     with col_num:
         num_results = st.slider("Results per source", 5, 30, 10)
 
@@ -475,12 +495,21 @@ with tab2:
     if search_button:
         if not job_title:
             st.warning("Please enter a job title before searching.")
+        elif market_selection == CUSTOM_LOCATION_LABEL and not (custom_location or "").strip():
+            st.warning("Please enter a location or choose a predefined market.")
         else:
-            with st.spinner(f"Fetching {job_title} roles in {market}…"):
-                jobs = fetch_all_jobs(job_title, market, num_results)
+            _location_label = custom_location.strip() if custom_location else market_selection
+            with st.spinner(f"Fetching {job_title} roles — {_location_label}…"):
+                jobs = fetch_all_jobs(
+                    job_title,
+                    market=market_selection if market_selection != CUSTOM_LOCATION_LABEL else DEFAULT_MARKET,
+                    num_results=num_results,
+                    custom_location=custom_location.strip() if custom_location else None,
+                    is_remote_override=is_remote,
+                )
 
             if jobs.empty:
-                st.error("No jobs found. Try a different title or market.")
+                st.error("No jobs found. Try a different title or location.")
             else:
                 st.success(
                     f"Found {len(jobs)} roles. Matching against your profile…"
