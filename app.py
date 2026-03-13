@@ -99,6 +99,22 @@ tab1, tab2, tab3 = st.tabs(["👤 My Profile", "🔍 Search Jobs", "🎯 Am I a 
 # (saved jobs). widget_prefix keeps Streamlit
 # widget keys unique across tabs.
 # ─────────────────────────────────────────────
+def _gap_error_warning(gap: dict) -> None:
+    """
+    Show a warning when analyse_gaps returned no content.
+    If the result carries an _error field (API exception was caught),
+    surface it so the user can see what actually went wrong.
+    """
+    error = gap.get("_error", "")
+    if error:
+        st.warning(f"Gap analysis failed: {error}")
+    else:
+        st.warning(
+            "Gap analysis returned no results — the API may be busy. "
+            "Try again in a moment."
+        )
+
+
 def _has_gap_content(gap: dict) -> bool:
     """
     Return True if the gap analysis dict contains any renderable content.
@@ -579,10 +595,7 @@ with tab2:
                             # alongside the warning — the button is the only source
                             # of results here (no auto-run), so stale data is misleading.
                             st.session_state.gap_analysis_results.pop(job_key, None)
-                            st.warning(
-                                "Gap analysis returned no results — the API may be busy. "
-                                "Try again in a moment."
-                            )
+                            _gap_error_warning(new_gap)
 
                 gap = st.session_state.gap_analysis_results.get(job_key)
                 if gap is not None:
@@ -740,10 +753,7 @@ with tab3:
             if _has_gap_content(new_gap):
                 st.session_state.gap_analysis_results[fit_job_key] = new_gap
             else:
-                st.warning(
-                    "Gap analysis returned no results — the API may be busy. "
-                    "Try again in a moment."
-                )
+                _gap_error_warning(new_gap)
 
         fit_gap = st.session_state.gap_analysis_results.get(fit_job_key)
         if fit_gap is not None:
@@ -827,10 +837,7 @@ with tab3:
                             # alongside the warning — the button is the only source
                             # of results here (no auto-run), so stale data is misleading.
                             st.session_state.gap_analysis_results.pop(sj_key, None)
-                            st.warning(
-                                "Gap analysis returned no results — the API may be busy. "
-                                "Try again in a moment."
-                            )
+                            _gap_error_warning(new_sj_gap)
 
                 sj_gap = st.session_state.gap_analysis_results.get(sj_key)
                 if sj_gap is not None:
