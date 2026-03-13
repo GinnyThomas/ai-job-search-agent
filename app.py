@@ -556,15 +556,20 @@ with tab2:
                         st.success("Saved to 🎯 Am I a good fit?")
 
                 if st.button("🔍 Analyse Gaps", key=f"gap_{job_key}"):
-                    with st.spinner("Analysing gaps for this role…"):
-                        new_gap = analyse_gaps(st.session_state.profile, job)
-                    if _has_gap_content(new_gap):
-                        st.session_state.gap_analysis_results[job_key] = new_gap
+                    _desc = job.get("description", "")
+                    if not isinstance(_desc, str) or not _desc.strip():
+                        # No description — store empty result so caption renders
+                        st.session_state.gap_analysis_results[job_key] = {}
                     else:
-                        st.warning(
-                            "Gap analysis returned no results — the API may be busy. "
-                            "Try again in a moment."
-                        )
+                        with st.spinner("Analysing gaps for this role…"):
+                            new_gap = analyse_gaps(st.session_state.profile, job)
+                        if _has_gap_content(new_gap):
+                            st.session_state.gap_analysis_results[job_key] = new_gap
+                        else:
+                            st.warning(
+                                "Gap analysis returned no results — the API may be busy. "
+                                "Try again in a moment."
+                            )
 
                 gap = st.session_state.gap_analysis_results.get(job_key)
                 if gap is not None:
@@ -795,15 +800,20 @@ with tab3:
                         st.rerun()
 
                 if st.button("🔍 Analyse Gaps", key=f"gap_saved_{sj_key}"):
-                    with st.spinner("Analysing gaps for this role…"):
-                        new_sj_gap = analyse_gaps(st.session_state.profile, saved_job)
-                    if _has_gap_content(new_sj_gap):
-                        st.session_state.gap_analysis_results[sj_key] = new_sj_gap
+                    _sj_desc = saved_job.get("description", "")
+                    if not isinstance(_sj_desc, str) or not _sj_desc.strip():
+                        # No description — store empty result so caption renders
+                        st.session_state.gap_analysis_results[sj_key] = {}
                     else:
-                        st.warning(
-                            "Gap analysis returned no results — the API may be busy. "
-                            "Try again in a moment."
-                        )
+                        with st.spinner("Analysing gaps for this role…"):
+                            new_sj_gap = analyse_gaps(st.session_state.profile, saved_job)
+                        if _has_gap_content(new_sj_gap):
+                            st.session_state.gap_analysis_results[sj_key] = new_sj_gap
+                        else:
+                            st.warning(
+                                "Gap analysis returned no results — the API may be busy. "
+                                "Try again in a moment."
+                            )
 
                 sj_gap = st.session_state.gap_analysis_results.get(sj_key)
                 if sj_gap is not None:
