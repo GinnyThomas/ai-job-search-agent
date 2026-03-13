@@ -239,7 +239,16 @@ with tab1:
             st.session_state.profile = profile
             st.session_state.match_results = []  # old results are now stale
 
-        st.success("Profile built and saved.")
+        skill_count = len(profile.get("technical_skills", []))
+        if skill_count == 0:
+            st.warning(
+                "⚠️ Profile built but no skills were detected. "
+                "This can happen if the documents are scanned images (not selectable text), "
+                "or if the AI response was cut short. Try uploading your main CV only and "
+                "rebuilding, or check that your PDF contains selectable text."
+            )
+        else:
+            st.success(f"Profile built and saved — {skill_count} skills detected.")
         st.rerun()
 
     # ── Profile display ──────────────────────────────────────────────
