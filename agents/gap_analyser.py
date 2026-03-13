@@ -211,12 +211,15 @@ a structured brief a CV writer will use to tailor the application.
 
         response = client.messages.create(
             model=SONNET_MODEL,
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{"role": "user", "content": prompt}]
         )
 
         return _parse_gap_response(response.content[0].text)
 
     except Exception as e:
-        print(f"Gap analysis failed for '{job.get('title', 'unknown')}': {e}")
-        return _safe_default_gap_analysis()
+        error_msg = str(e)
+        print(f"Gap analysis failed for '{job.get('title', 'unknown')}': {error_msg}")
+        result = _safe_default_gap_analysis()
+        result["_error"] = error_msg
+        return result

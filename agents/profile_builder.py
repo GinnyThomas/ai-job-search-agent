@@ -322,7 +322,7 @@ Important:
 
         response = client.messages.create(
             model=SONNET_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": prompt}]
         )
 
