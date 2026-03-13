@@ -91,6 +91,13 @@ if "fit_check_result" not in st.session_state:
 
 if "gap_analysis_results" not in st.session_state:
     st.session_state.gap_analysis_results = {}
+    # Pre-populate from any saved jobs that already have a stored gap analysis
+    # so results survive app reloads without re-running the API.
+    for _sj in load_saved_jobs(SAVED_JOBS_PATH):
+        _sj_gap = _sj.get("gap_analysis")
+        if isinstance(_sj_gap, dict) and _sj_gap:
+            _sj_key = f"{_sj.get('title', '')}_{_sj.get('company', '')}"
+            st.session_state.gap_analysis_results[_sj_key] = _sj_gap
 
 # ─────────────────────────────────────────────
 # Sidebar — profile status at a glance
@@ -617,6 +624,7 @@ with tab2:
                         st.link_button("View Job Posting →", job_url)
                 with col_save:
                     if st.button("🔖 Save", key=f"save_{job_key}"):
+                        _gap_to_save = st.session_state.gap_analysis_results.get(job_key)
                         save_job({
                             "title": job.get("title", ""),
                             "company": job.get("company", ""),
@@ -630,6 +638,8 @@ with tab2:
                             "highlight_background": result.get("highlight_background", ""),
                             "reasoning": result.get("reasoning", ""),
                             "source": "search",
+                            # Include gap analysis if already run, so it survives reloads
+                            **({"gap_analysis": _gap_to_save} if _has_gap_content(_gap_to_save or {}) else {}),
                         }, SAVED_JOBS_PATH)
                         st.success("Saved to 🎯 Am I a good fit?")
 
@@ -784,6 +794,7 @@ with tab3:
                 st.link_button("View Job Posting →", job["job_url"])
         with col_save_fit:
             if st.button("🔖 Save this job", key="save_fit_check"):
+                _fit_gap_to_save = st.session_state.gap_analysis_results.get(fit_job_key)
                 save_job({
                     "title": job.get("title", ""),
                     "company": job.get("company", ""),
@@ -797,6 +808,8 @@ with tab3:
                     "highlight_background": result.get("highlight_background", ""),
                     "reasoning": result.get("reasoning", ""),
                     "source": "manual",
+                    # Include gap analysis so it survives reloads without re-running the API
+                    **({"gap_analysis": _fit_gap_to_save} if _has_gap_content(_fit_gap_to_save or {}) else {}),
                 }, SAVED_JOBS_PATH)
                 st.success("Saved!")
 
@@ -885,6 +898,9 @@ with tab3:
                             new_sj_gap = analyse_gaps(st.session_state.profile, saved_job)
                         if _has_gap_content(new_sj_gap):
                             st.session_state.gap_analysis_results[sj_key] = new_sj_gap
+                            # Persist into the saved job record so the result
+                            # survives app reloads without re-running the API.
+                            save_job({**saved_job, "gap_analysis": new_sj_gap}, SAVED_JOBS_PATH)
                         else:
                             # Clear any stale cached result so it doesn't render
                             # alongside the warning — the button is the only source
