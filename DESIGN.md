@@ -529,9 +529,14 @@ Secrets configured via Streamlit Cloud dashboard — never stored in the reposit
 
 ---
 
-## 12. Future Enhancements
+## 12. Enhancements
 
-- **Custom location / remote toggle** — flexible location input beyond the three preset markets, with a separate "remote only" toggle
+### Completed
+
+- **Custom location / remote toggle** — flexible location input beyond the three preset markets (`CUSTOM_LOCATION_LABEL` sentinel + `is_remote_override` parameter), with a separate "remote only" checkbox pre-set per market
+
+### Future
+
 - **Application tracker** — log applications with status and notes
 - **Cover letter generator** — tailored cover letters alongside CV
 - **Scheduled search** — surface new matches automatically

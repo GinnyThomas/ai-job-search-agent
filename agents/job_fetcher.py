@@ -6,6 +6,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from jobspy import scrape_jobs
 from dotenv import load_dotenv
+from typing import Optional
 from urllib.parse import urlparse
 
 load_dotenv()
@@ -56,7 +57,7 @@ def fetch_jobs_jobspy(
     job_title: str,
     market: str = DEFAULT_MARKET,
     num_results: int = 20,
-    is_remote_override: bool = None,
+    is_remote_override: Optional[bool] = None,
 ) -> pd.DataFrame:
     """
     Fetch live jobs from LinkedIn, Indeed, and Glassdoor using JobSpy.
@@ -132,7 +133,7 @@ def fetch_jobs_adzuna(
     job_title: str,
     market: str = DEFAULT_MARKET,
     num_results: int = 20,
-    is_remote_override: bool = None,
+    is_remote_override: Optional[bool] = None,
 ) -> pd.DataFrame:
     """
     Fetch live jobs from Adzuna API.
@@ -199,8 +200,8 @@ def fetch_all_jobs(
     job_title: str,
     market: str = DEFAULT_MARKET,
     num_results: int = 20,
-    custom_location: str = None,
-    is_remote_override: bool = None,
+    custom_location: Optional[str] = None,
+    is_remote_override: Optional[bool] = None,
 ) -> pd.DataFrame:
     """
     The main public function called by the app.

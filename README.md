@@ -30,7 +30,7 @@ This tool fixes all three.
 
 **Job search (Tab 2)**
 - Fetches live listings from LinkedIn, Indeed, Glassdoor (via JobSpy) and Adzuna
-- Markets: Barcelona/Spain, Remote UK, Remote US
+- Markets: Barcelona/Spain, Remote UK, Remote US, or any custom location (with remote toggle)
 - Scores each listing against your full profile using Claude Haiku — cost-effective bulk matching
 - Weighted scoring: recent production skills score higher than bootcamp skills
 - Gap analysis per job: alignment points, genuine gaps, quick wins, honest assessment

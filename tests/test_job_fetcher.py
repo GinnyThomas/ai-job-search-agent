@@ -20,12 +20,14 @@ from unittest.mock import patch, MagicMock
 from agents.job_fetcher import (
     MARKET_CONFIG,
     DEFAULT_MARKET,
+    CUSTOM_LOCATION_LABEL,
     fetch_jobs_jobspy,
     fetch_jobs_adzuna,
     fetch_all_jobs,
     get_market_options,
     fetch_job_from_url,
     _is_safe_url,
+    _fetch_jobs_jobspy_custom,
 )
 
 
@@ -99,14 +101,23 @@ class TestMarketConfig:
         assert MARKET_CONFIG["Remote UK"]["adzuna_country"] == "gb"
         assert MARKET_CONFIG["Remote US"]["adzuna_country"] == "us"
 
-    def test_get_market_options_matches_config_keys(self):
+    def test_get_market_options_contains_all_config_keys(self):
         """
-        get_market_options() must stay in sync with MARKET_CONFIG.
+        get_market_options() must include all MARKET_CONFIG keys.
         If someone adds a market to the config but forgets to update the
         options function, this test will catch it.
         """
         options = get_market_options()
-        assert set(options) == set(MARKET_CONFIG.keys())
+        for market in MARKET_CONFIG.keys():
+            assert market in options
+
+    def test_get_market_options_includes_custom_location_label(self):
+        """
+        get_market_options() must include the CUSTOM_LOCATION_LABEL sentinel
+        so the UI can offer a free-text location entry option.
+        """
+        options = get_market_options()
+        assert CUSTOM_LOCATION_LABEL in options
 
     def test_get_market_options_returns_list(self):
         """The return type must be a list — Streamlit expects this."""
@@ -321,13 +332,14 @@ class TestFetchAllJobs:
         """
         The market choice must flow through to both underlying fetchers.
         If it doesn't, both will silently use the default market instead.
+        The is_remote_override defaults to None and must also be forwarded.
         """
         mock_jobspy.return_value = pd.DataFrame()
         mock_adzuna.return_value = pd.DataFrame()
         fetch_all_jobs("Python Developer", "Remote UK")
 
-        mock_jobspy.assert_called_once_with("Python Developer", "Remote UK", 20)
-        mock_adzuna.assert_called_once_with("Python Developer", "Remote UK", 20)
+        mock_jobspy.assert_called_once_with("Python Developer", "Remote UK", 20, None)
+        mock_adzuna.assert_called_once_with("Python Developer", "Remote UK", 20, None)
 
     @patch("agents.job_fetcher.fetch_jobs_adzuna")
     @patch("agents.job_fetcher.fetch_jobs_jobspy")
@@ -537,3 +549,233 @@ class TestIsSafeUrl:
         result = fetch_job_from_url("http://localhost/admin")
         assert result == ""
         mock_get.assert_not_called()
+
+
+# ─────────────────────────────────────────────
+# CUSTOM_LOCATION_LABEL tests
+# ─────────────────────────────────────────────
+
+class TestCustomLocationLabel:
+
+    def test_custom_location_label_is_a_string(self):
+        """The sentinel must be a plain string — Streamlit selectbox requires this."""
+        assert isinstance(CUSTOM_LOCATION_LABEL, str)
+        assert len(CUSTOM_LOCATION_LABEL) > 0
+
+    def test_custom_location_label_is_not_a_market_key(self):
+        """
+        The sentinel must not collide with any real market name — otherwise
+        the app would try to look it up in MARKET_CONFIG and get wrong config.
+        """
+        assert CUSTOM_LOCATION_LABEL not in MARKET_CONFIG
+
+
+# ─────────────────────────────────────────────
+# _fetch_jobs_jobspy_custom tests
+# ─────────────────────────────────────────────
+
+class TestFetchJobsJobspyCustom:
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_returns_dataframe_on_success(self, mock_scrape, sample_jobspy_row):
+        """Happy path: returns a DataFrame with the scraped results."""
+        mock_scrape.return_value = pd.DataFrame([sample_jobspy_row])
+        result = _fetch_jobs_jobspy_custom("Python Developer", "Berlin, Germany")
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_tags_results_with_custom_location_as_market(self, mock_scrape, sample_jobspy_row):
+        """
+        Custom location searches tag results with the location string as market.
+        This is what the UI uses to display where the search was run.
+        """
+        mock_scrape.return_value = pd.DataFrame([sample_jobspy_row])
+        result = _fetch_jobs_jobspy_custom("Python Developer", "Berlin, Germany")
+        assert result.iloc[0]["market"] == "Berlin, Germany"
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_appends_remote_to_search_term_when_is_remote_true(self, mock_scrape):
+        """When is_remote=True, 'remote' must be added to the search term."""
+        mock_scrape.return_value = pd.DataFrame()
+        _fetch_jobs_jobspy_custom("Python Developer", "Berlin, Germany", is_remote=True)
+        call_kwargs = mock_scrape.call_args[1]
+        assert "remote" in call_kwargs["search_term"].lower()
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_does_not_append_remote_when_is_remote_false(self, mock_scrape):
+        """When is_remote=False, 'remote' must NOT be added to the search term."""
+        mock_scrape.return_value = pd.DataFrame()
+        _fetch_jobs_jobspy_custom("Python Developer", "Berlin, Germany", is_remote=False)
+        call_kwargs = mock_scrape.call_args[1]
+        assert "remote" not in call_kwargs["search_term"].lower()
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_passes_location_to_scrape_jobs(self, mock_scrape):
+        """The custom location string must be forwarded to scrape_jobs as 'location'."""
+        mock_scrape.return_value = pd.DataFrame()
+        _fetch_jobs_jobspy_custom("Python Developer", "Sydney, Australia")
+        call_kwargs = mock_scrape.call_args[1]
+        assert call_kwargs["location"] == "Sydney, Australia"
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_returns_empty_dataframe_on_exception(self, mock_scrape):
+        """Exceptions from scrape_jobs must be caught and return empty DataFrame."""
+        mock_scrape.side_effect = Exception("Network error")
+        result = _fetch_jobs_jobspy_custom("Python Developer", "Berlin, Germany")
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+
+# ─────────────────────────────────────────────
+# is_remote_override tests
+# Verify the override flows through correctly in
+# fetch_jobs_jobspy and fetch_jobs_adzuna.
+# ─────────────────────────────────────────────
+
+class TestIsRemoteOverride:
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_jobspy_override_true_forces_remote_search_on_local_market(self, mock_scrape):
+        """
+        is_remote_override=True must add 'remote' to the search term even for
+        Barcelona, which defaults to is_remote=False.
+        """
+        mock_scrape.return_value = pd.DataFrame()
+        fetch_jobs_jobspy("Python Developer", "Barcelona / Spain", is_remote_override=True)
+        call_kwargs = mock_scrape.call_args[1]
+        assert "remote" in call_kwargs["search_term"].lower()
+        assert call_kwargs["is_remote"] is True
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_jobspy_override_false_suppresses_remote_on_remote_market(self, mock_scrape):
+        """
+        is_remote_override=False must remove 'remote' from the search term even for
+        Remote UK, which defaults to is_remote=True.
+        """
+        mock_scrape.return_value = pd.DataFrame()
+        fetch_jobs_jobspy("Python Developer", "Remote UK", is_remote_override=False)
+        call_kwargs = mock_scrape.call_args[1]
+        assert "remote" not in call_kwargs["search_term"].lower()
+        assert call_kwargs["is_remote"] is False
+
+    @patch("agents.job_fetcher.scrape_jobs")
+    def test_jobspy_none_override_uses_market_default(self, mock_scrape):
+        """
+        is_remote_override=None must fall back to the market config's default.
+        Remote UK defaults to is_remote=True so the search term must include 'remote'.
+        """
+        mock_scrape.return_value = pd.DataFrame()
+        fetch_jobs_jobspy("Python Developer", "Remote UK", is_remote_override=None)
+        call_kwargs = mock_scrape.call_args[1]
+        assert "remote" in call_kwargs["search_term"].lower()
+
+    @patch("agents.job_fetcher.ADZUNA_APP_ID", "test_app_id")
+    @patch("agents.job_fetcher.ADZUNA_API_KEY", "test_api_key")
+    @patch("agents.job_fetcher.requests.get")
+    def test_adzuna_override_true_adds_remote_to_search_term(self, mock_get):
+        """is_remote_override=True must add 'remote' to the Adzuna search term."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"results": []}
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        fetch_jobs_adzuna("Python Developer", "Barcelona / Spain", is_remote_override=True)
+        call_params = mock_get.call_args[1]["params"]
+        assert "remote" in call_params["what"].lower()
+
+    @patch("agents.job_fetcher.ADZUNA_APP_ID", "test_app_id")
+    @patch("agents.job_fetcher.ADZUNA_API_KEY", "test_api_key")
+    @patch("agents.job_fetcher.requests.get")
+    def test_adzuna_override_false_suppresses_remote_on_remote_market(self, mock_get):
+        """is_remote_override=False must remove 'remote' from the Adzuna search term."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"results": []}
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        fetch_jobs_adzuna("Python Developer", "Remote UK", is_remote_override=False)
+        call_params = mock_get.call_args[1]["params"]
+        assert "remote" not in call_params["what"].lower()
+
+
+# ─────────────────────────────────────────────
+# fetch_all_jobs custom_location tests
+# ─────────────────────────────────────────────
+
+class TestFetchAllJobsCustomLocation:
+
+    @patch("agents.job_fetcher._fetch_jobs_jobspy_custom")
+    @patch("agents.job_fetcher.fetch_jobs_adzuna")
+    @patch("agents.job_fetcher.fetch_jobs_jobspy")
+    def test_custom_location_uses_jobspy_custom_not_standard(
+        self, mock_jobspy, mock_adzuna, mock_custom
+    ):
+        """
+        When custom_location is provided, _fetch_jobs_jobspy_custom must be called
+        and fetch_jobs_jobspy / fetch_jobs_adzuna must NOT be called.
+        Custom locations have no Adzuna country code, so Adzuna is skipped.
+        """
+        mock_custom.return_value = pd.DataFrame()
+        fetch_all_jobs("Python Developer", custom_location="Berlin, Germany")
+        mock_custom.assert_called_once()
+        mock_jobspy.assert_not_called()
+        mock_adzuna.assert_not_called()
+
+    @patch("agents.job_fetcher._fetch_jobs_jobspy_custom")
+    @patch("agents.job_fetcher.fetch_jobs_adzuna")
+    @patch("agents.job_fetcher.fetch_jobs_jobspy")
+    def test_custom_location_passes_location_to_custom_fetcher(
+        self, mock_jobspy, mock_adzuna, mock_custom
+    ):
+        """The location string must flow through to _fetch_jobs_jobspy_custom."""
+        mock_custom.return_value = pd.DataFrame()
+        fetch_all_jobs("Python Developer", custom_location="Sydney, Australia")
+        call_args = mock_custom.call_args
+        assert call_args[0][1] == "Sydney, Australia"
+
+    @patch("agents.job_fetcher._fetch_jobs_jobspy_custom")
+    @patch("agents.job_fetcher.fetch_jobs_adzuna")
+    @patch("agents.job_fetcher.fetch_jobs_jobspy")
+    def test_custom_location_with_remote_override_true(
+        self, mock_jobspy, mock_adzuna, mock_custom
+    ):
+        """is_remote_override=True must be forwarded to the custom fetcher."""
+        mock_custom.return_value = pd.DataFrame()
+        fetch_all_jobs(
+            "Python Developer",
+            custom_location="Berlin, Germany",
+            is_remote_override=True,
+        )
+        call_args = mock_custom.call_args
+        assert call_args[0][2] is True  # is_remote positional arg
+
+    @patch("agents.job_fetcher._fetch_jobs_jobspy_custom")
+    @patch("agents.job_fetcher.fetch_jobs_adzuna")
+    @patch("agents.job_fetcher.fetch_jobs_jobspy")
+    def test_custom_location_defaults_is_remote_false_when_override_is_none(
+        self, mock_jobspy, mock_adzuna, mock_custom
+    ):
+        """
+        When is_remote_override is None (not provided) with a custom location,
+        is_remote must default to False — no 'remote' search when unspecified.
+        """
+        mock_custom.return_value = pd.DataFrame()
+        fetch_all_jobs("Python Developer", custom_location="Berlin, Germany")
+        call_args = mock_custom.call_args
+        assert call_args[0][2] is False  # is_remote defaults to False
+
+    @patch("agents.job_fetcher.fetch_jobs_adzuna")
+    @patch("agents.job_fetcher.fetch_jobs_jobspy")
+    def test_is_remote_override_forwarded_to_both_sources_for_preset_market(
+        self, mock_jobspy, mock_adzuna
+    ):
+        """
+        For preset markets, is_remote_override must be forwarded to both
+        fetch_jobs_jobspy and fetch_jobs_adzuna.
+        """
+        mock_jobspy.return_value = pd.DataFrame()
+        mock_adzuna.return_value = pd.DataFrame()
+        fetch_all_jobs("Python Developer", "Barcelona / Spain", is_remote_override=True)
+        mock_jobspy.assert_called_once_with("Python Developer", "Barcelona / Spain", 20, True)
+        mock_adzuna.assert_called_once_with("Python Developer", "Barcelona / Spain", 20, True)
